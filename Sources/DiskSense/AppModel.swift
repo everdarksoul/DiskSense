@@ -219,6 +219,12 @@ final class AppModel: ObservableObject {
                 self.scannedItemCount = completedSnapshot?.entryCount ?? 0
                 self.directoryCache = [rootURL.path: (items, result.unreadable)]
                 if let completedSnapshot {
+                    let rootEntries = result.children.map { entry in
+                        CatalogEntry(path: entry.url.path, parent: rootURL.path, name: entry.name, isDirectory: entry.isDirectory,
+                            isPackage: entry.isPackage, bytes: entry.bytes, logicalBytes: 0, modified: .distantPast,
+                            unreadable: entry.unreadable, category: StorageCategory.classify(path: entry.url.path, isDirectory: entry.isDirectory), isSymbolicLink: false)
+                    }
+                    self.cacheMap(rootEntries, at: rootURL, measuredAt: completedSnapshot.finished)
                     let location = self.browserURL
                     let selectedTab = self.selection
                     self.stopBrowserWork()
