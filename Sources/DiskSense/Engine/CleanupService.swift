@@ -127,7 +127,7 @@ final class CleanupService {
             do {
                 // Recheck existence, running applications and symlink ancestors immediately before mutation.
                 let checked = try validate([candidate])
-                guard let current = checked.first, current.url == candidate.url else {
+                guard let current = checked.first, current.url.path == candidate.url.path else {
                     throw CleanupError.unsafePath(candidate.url.path)
                 }
                 var resulting: NSURL?
@@ -156,7 +156,7 @@ final class CleanupService {
         let canonicalSource = source.deletingLastPathComponent().resolvingSymlinksInPath()
             .appendingPathComponent(source.lastPathComponent).standardizedFileURL
         let localTrash = home.appendingPathComponent(".Trash").resolvingSymlinksInPath()
-        var allowedTrash = contains(localTrash, canonicalSource) && canonicalSource != localTrash
+        var allowedTrash = contains(localTrash, canonicalSource) && canonicalSource.path != localTrash.path
         let components = canonicalSource.pathComponents
         if components.count > 5, components[1] == "Volumes", components[3] == ".Trashes", components[4] == String(getuid()) { allowedTrash = true }
         guard allowedTrash else { throw CleanupError.unsafePath(source.path) }
@@ -205,7 +205,8 @@ final class CleanupService {
             return
         }
 
-        if contains(home, url), url != home {
+        if contains(home, url) {
+            guard path != home.path else { throw CleanupError.unsafePath(path) }
             let protectedRoots = ["Library", "Library/Caches", "Library/Containers", "Library/Group Containers",
                                   "Library/Application Support", "Library/Preferences", "Library/Logs",
                                   "Library/Saved Application State", "Library/Developer", "Applications",
@@ -226,7 +227,7 @@ final class CleanupService {
         }
         for root in ["/Library/Caches", "/Library/Logs", "/Library/Application Support", "/Library/Preferences"] {
             let rootURL = URL(fileURLWithPath: root)
-            if url != rootURL, contains(rootURL, url) { return }
+            if url.path != rootURL.path, contains(rootURL, url) { return }
         }
         throw CleanupError.unsafePath(path)
     }
