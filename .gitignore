@@ -1,0 +1,17 @@
+.build/
+.swiftpm/
+.DS_Store
+*.xcuserstate
+*.xcuserdata/
+*.sqlite*
+*.db
+*.log
+*.zip
+*.dmg
+*.app/
+*.p12
+*.p8
+.env
+.env.*
+.cleanup-tests-*/
+/VALIDATION.md

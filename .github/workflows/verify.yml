@@ -1,0 +1,29 @@
+name: Verify macOS
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Regression and fixture benchmark
+        run: ./scripts/test.sh
+      - name: Release package and signature
+        run: ./scripts/build-app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiskSense-${{ matrix.os }}-local-build
+          path: .build/Distribution/DiskSense-*.zip
+          retention-days: 7
