@@ -10,9 +10,9 @@ struct StoreError: LocalizedError {
 
 final class SQLConnection {
     let handle: OpaquePointer
-    init(url: URL) throws {
+    init(url: URL, readOnly: Bool = false) throws {
         var pointer: OpaquePointer?
-        guard sqlite3_open_v2(url.path, &pointer, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK, let pointer else {
+        guard sqlite3_open_v2(url.path, &pointer, (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK, let pointer else {
             let message = pointer.map { String(cString: sqlite3_errmsg($0)) } ?? "Cannot open scan database."
             if let pointer { sqlite3_close(pointer) }
             throw StoreError(message: message)
@@ -61,7 +61,7 @@ final class ScanStore: @unchecked Sendable {
         self.directory = directory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-        databaseURL = directory.appendingPathComponent("scans.sqlite")
+        databaseURL = directory.appendingPathComponent("scans-v4.sqlite")
         let isNew = !FileManager.default.fileExists(atPath: databaseURL.path)
         let db = try SQLConnection(url: databaseURL)
         try db.execute("""
@@ -168,7 +168,7 @@ final class ScanStore: @unchecked Sendable {
             .filter { $0.delta != 0 }.sorted { abs($0.delta) > abs($1.delta) }
     }
     func localDataBytes() -> Int64 {
-        ["scans.sqlite", "scans.sqlite-wal", "scans.sqlite-shm", "inventory.json"].reduce(0) { sum, name in
+        ["scans-v4.sqlite", "scans-v4.sqlite-wal", "scans-v4.sqlite-shm", "scans.sqlite", "scans.sqlite-wal", "scans.sqlite-shm", "inventory.json"].reduce(0) { sum, name in
             let attributes = try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(name).path)
             return sum + ((attributes?[.size] as? NSNumber)?.int64Value ?? 0)
         }
@@ -190,9 +190,50 @@ final class ScanStore: @unchecked Sendable {
         while try db.step(s) { result.append(entry(s)) }
         return result
     }
+    /// Versioned index files avoid a multi-gigabyte DELETE/VACUUM migration.
+    /// Copy all receipts successfully before retiring the obsolete file.
+    private func retireLegacyIndex() throws {
+        let legacy = directory.appendingPathComponent("scans.sqlite")
+        guard FileManager.default.fileExists(atPath: legacy.path) else { return }
+        var events: [CleanupEvent] = []
+        do {
+            let old = try SQLConnection(url: legacy, readOnly: true)
+            if let pending = try? old.statement("SELECT pid FROM pending_scans") {
+                defer { sqlite3_finalize(pending) }
+                while try old.step(pending) {
+                    let pid = pid_t(sqlite3_column_int(pending, 0))
+                    if pid > 0 && kill(pid, 0) == 0 { return }
+                }
+            }
+            let receipts = try old.statement("SELECT payload FROM history")
+            defer { sqlite3_finalize(receipts) }
+            while try old.step(receipts) {
+                guard let bytes = sqlite3_column_blob(receipts, 0) else { throw StoreError(message: "Legacy cleanup receipt is unreadable; old data was kept.") }
+                events.append(try JSONDecoder().decode(CleanupEvent.self, from: Data(bytes: bytes, count: Int(sqlite3_column_bytes(receipts, 0)))))
+            }
+        }
+        let db = try SQLConnection(url: databaseURL)
+        let insert = try db.statement("INSERT OR IGNORE INTO history VALUES(?,?,?)")
+        defer { sqlite3_finalize(insert) }
+        for event in events {
+            let payload = try JSONEncoder().encode(event)
+            sqlite3_reset(insert); sqlite3_clear_bindings(insert)
+            db.bind([event.id], to: insert); sqlite3_bind_double(insert, 2, event.date.timeIntervalSince1970)
+            _ = payload.withUnsafeBytes { sqlite3_bind_blob(insert, 3, $0.baseAddress, Int32($0.count), sqliteTransient) }
+            try db.run(insert)
+        }
+        // Checkpoint imported receipts before unlinking the obsolete index.
+        try db.execute("PRAGMA wal_checkpoint(FULL)")
+        try FileManager.default.removeItem(at: legacy)
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = URL(fileURLWithPath: legacy.path + suffix)
+            if FileManager.default.fileExists(atPath: sidecar.path) { try FileManager.default.removeItem(at: sidecar) }
+        }
+    }
     /// Only cached indexes are pruned. Cleanup receipts and inventory survive.
     /// Run off the main thread; compaction can take time for legacy large files.
     func maintain() throws {
+        try retireLegacyIndex()
         let db = try SQLConnection(url: databaseURL)
         let version = try db.statement("PRAGMA user_version")
         let schemaVersion = try db.step(version) ? sqlite3_column_int(version, 0) : 0

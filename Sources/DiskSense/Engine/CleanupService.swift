@@ -98,8 +98,11 @@ final class CleanupService {
         for candidate in candidates {
             guard candidate.url.isFileURL else { throw CleanupError.unsafePath(candidate.url.absoluteString) }
             let original = candidate.url.standardizedFileURL
-            let canonical = Self.normalizeDataAlias(original.deletingLastPathComponent().resolvingSymlinksInPath()
+            let resolved = Self.normalizeDataAlias(original.deletingLastPathComponent().resolvingSymlinksInPath()
                 .appendingPathComponent(original.lastPathComponent).standardizedFileURL)
+            // Never let a Foundation directory hint append a slash to the final
+            // symlink: POSIX lstat must inspect the link itself on every OS.
+            let canonical = URL(fileURLWithPath: resolved.path, isDirectory: false)
             try checkSafety(canonical, running: running)
             let identity = try Self.identity(at: canonical)
             if let expected = candidate.expectedIdentity, expected != identity { throw CleanupError.changedPath(original.path) }

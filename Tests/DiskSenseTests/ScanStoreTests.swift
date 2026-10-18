@@ -88,4 +88,39 @@ struct ScanStoreTests {
         #expect(throws: StoreError.self) { _ = try db.step(statement) }
     }
 
+    @Test func versionedIndexRetiresLegacyCacheOnlyAfterCopyingReceipts() throws {
+        let directory = try fixture(); defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = directory.appendingPathComponent("scans.sqlite")
+        let event = CleanupEvent(id: "legacy-event", date: Date(), receipts: [], failures: ["Preserve this receipt"], restored: [])
+        do {
+            let old = try SQLConnection(url: legacy)
+            try old.execute("CREATE TABLE history(id TEXT PRIMARY KEY,date REAL,payload BLOB); CREATE TABLE pending_scans(id TEXT,pid INTEGER);")
+            let statement = try old.statement("INSERT INTO history VALUES(?,?,?)")
+            defer { sqlite3_finalize(statement) }
+            old.bind([event.id], to: statement); sqlite3_bind_double(statement, 2, event.date.timeIntervalSince1970)
+            let payload = try JSONEncoder().encode(event)
+            _ = payload.withUnsafeBytes { sqlite3_bind_blob(statement, 3, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }
+            try old.run(statement)
+        }
+        let store = try ScanStore(directory: directory)
+        #expect(store.databaseURL.lastPathComponent == "scans-v4.sqlite")
+        try store.maintain()
+        #expect(!FileManager.default.fileExists(atPath: legacy.path))
+        #expect(try store.history().first?.failures == event.failures)
+        try store.maintain()
+        #expect(try store.history().count == 1)
+    }
+
+    @Test func unreadableLegacyReceiptKeepsTheOriginalCache() throws {
+        let directory = try fixture(); defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = directory.appendingPathComponent("scans.sqlite")
+        do {
+            let old = try SQLConnection(url: legacy)
+            try old.execute("CREATE TABLE history(payload BLOB); INSERT INTO history VALUES('bad JSON');")
+        }
+        let store = try ScanStore(directory: directory)
+        #expect(throws: (any Error).self) { try store.maintain() }
+        #expect(FileManager.default.fileExists(atPath: legacy.path))
+    }
+
 }

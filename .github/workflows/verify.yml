@@ -16,6 +16,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Select Swift 6 toolchain on Sonoma
+        if: matrix.os == 'macos-14'
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
       - name: Toolchain
         run: swift --version
       - name: Regression and fixture benchmark
