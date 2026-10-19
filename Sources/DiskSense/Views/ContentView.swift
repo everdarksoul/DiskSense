@@ -96,7 +96,11 @@ struct ContentView: View {
                     }.padding(.horizontal, 22).padding(.vertical, 8)
                 }
                 if model.snapshot?.indexTruncated == true {
-                    Label("Index budget reached. Folder totals are measured, but search and duplicate results cover only indexed files. Choose a smaller folder for full coverage.", systemImage: "info.circle").font(.caption).foregroundStyle(.orange).padding(12)
+                    HStack {
+                        Label("This saved scan is incomplete. Rebuild it to search and check duplicates across all readable files.", systemImage: "info.circle").font(.caption).foregroundStyle(.orange)
+                        Spacer()
+                        Button("Rebuild index") { model.refreshFolder() }.controlSize(.small).disabled(model.isScanning || model.isCleaning)
+                    }.padding(12)
                 }
                 if let warning = model.persistenceWarning {
                     Label("Saved results: " + warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).padding(10)

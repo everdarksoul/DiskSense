@@ -71,6 +71,13 @@ struct ScanStoreTests {
         }
         writer.discard()
         #expect(try store.snapshots().isEmpty == true)
+        let database = try SQLConnection(url: store.databaseURL)
+        for table in ["entries", "directories", "catalog_scans", "pending_scans"] {
+            let rows = try database.statement("SELECT COUNT(*) FROM " + table)
+            defer { sqlite3_finalize(rows) }
+            #expect(try database.step(rows))
+            #expect(sqlite3_column_int64(rows, 0) == 0)
+        }
         try store.saveHistory(CleanupEvent(id: "test", date: Date(), receipts: [], failures: ["Example failure"], restored: []))
         try store.clearScans()
         #expect(try store.history().count == 1)
@@ -103,7 +110,7 @@ struct ScanStoreTests {
             try old.run(statement)
         }
         let store = try ScanStore(directory: directory)
-        #expect(store.databaseURL.lastPathComponent == "scans-v4.sqlite")
+        #expect(store.databaseURL.lastPathComponent == "scans-v5.sqlite")
         try store.maintain()
         #expect(!FileManager.default.fileExists(atPath: legacy.path))
         #expect(try store.history().first?.failures == event.failures)
@@ -135,6 +142,56 @@ struct ScanStoreTests {
         let encoded = try JSONEncoder().encode(legacy)
         #expect(!String(decoding: encoded, as: UTF8.self).contains("disposition"))
         #expect(try JSONDecoder().decode(CleanupEvent.self, from: encoded).disposition == nil)
+    }
+
+    @Test func compactUpgradePreservesV4ReceiptsAndRemembersTheScannedRoot() throws {
+        let directory = try fixture(); defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = directory.appendingPathComponent("scans-v4.sqlite")
+        let event = CleanupEvent(id: "v4", date: Date(), receipts: [], failures: ["kept"], restored: [])
+        do {
+            let old = try SQLConnection(url: legacy)
+            try old.execute("CREATE TABLE history(payload BLOB); CREATE TABLE snapshots(root TEXT,finished REAL); INSERT INTO snapshots VALUES('/Volumes/Example',42);")
+            let insert = try old.statement("INSERT INTO history VALUES(?)")
+            defer { sqlite3_finalize(insert) }
+            let payload = try JSONEncoder().encode(event)
+            _ = payload.withUnsafeBytes { sqlite3_bind_blob(insert, 1, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }
+            try old.run(insert)
+        }
+        let store = try ScanStore(directory: directory)
+        try store.maintain()
+        #expect(try store.history().first?.id == "v4")
+        #expect(try store.preferredRebuildRoot()?.path == "/Volumes/Example")
+        #expect(!FileManager.default.fileExists(atPath: legacy.path))
+    }
+
+    @Test func retentionEvictsHistoryWithoutCuttingTheNewestIndex() throws {
+        let directory = try fixture(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try ScanStore(directory: directory.appendingPathComponent("Store"), historyBudgetBytes: 0)
+        func save(_ name: String) throws -> ScanSnapshot {
+            let writer = try store.begin(root: directory.appendingPathComponent(name))
+            let root = writer.root
+            for index in 0..<25 {
+                writer.record(CatalogEntry(path: root.appendingPathComponent("\(index)").path, parent: root.path, name: String(index), isDirectory: false, isPackage: false, bytes: 42, logicalBytes: 42, modified: .distantPast, unreadable: 0, category: .other, isSymbolicLink: false))
+            }
+            return try writer.complete(bytes: 1050, unreadable: 0)
+        }
+        let old = try save("Old")
+        let current = try save("Current")
+        #expect(try store.snapshots().map(\.id) == [current.id])
+        #expect(try store.children(snapshot: current.id, parent: current.root).count == 25)
+        #expect(current.indexTruncated == false)
+        #expect(try store.children(snapshot: old.id, parent: old.root).isEmpty)
+    }
+
+    @Test func ownIndexIsExcludedThroughTheStartupDataAliasToo() throws {
+        let directory = try fixture(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try ScanStore(directory: directory.appendingPathComponent("Store"))
+        let writer = try store.begin(root: directory)
+        let excluded = writer.excludedPath
+        #expect(writer.excludes(excluded + "/scans-v5.sqlite"))
+        #expect(writer.excludes("/System/Volumes/Data" + excluded + "/scans-v5.sqlite-wal"))
+        #expect(!writer.excludes(excluded + "-other/file"))
+        writer.discard()
     }
 
 }

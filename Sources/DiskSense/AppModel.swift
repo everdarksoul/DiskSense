@@ -219,6 +219,9 @@ final class AppModel: ObservableObject {
                 if self.browserURL == rootURL { self.browserItems = items; self.browserUnreadable = result.unreadable }
                 self.resetMapCache()
                 self.snapshot = completedSnapshot
+                if completedSnapshot != nil, self.notice?.hasPrefix("Rebuilding your saved scan") == true {
+                    self.notice = "Your saved scan was rebuilt with complete indexing. Cleanup history was kept."
+                }
                 self.scannedItemCount = completedSnapshot?.entryCount ?? 0
                 self.directoryCache = [rootURL.path: (items, result.unreadable)]
                 if let completedSnapshot {

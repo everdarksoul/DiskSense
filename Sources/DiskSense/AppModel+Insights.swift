@@ -25,6 +25,7 @@ extension AppModel {
                 let inventory = try? store.inventory()
                 let history = try store.history()
                 let latest = saved.first
+                let rebuildRoot = latest == nil ? try store.preferredRebuildRoot() : nil
                 let children = try latest.map { try store.children(snapshot: $0.id, parent: $0.root) } ?? []
                 DispatchQueue.main.async {
                     self.isBootstrapping = false
@@ -35,7 +36,14 @@ extension AppModel {
                     if let latest {
                         self.presentSaved(latest, children: children)
                         self.loadInsights(for: latest)
-                    } else { self.runFullScan() }
+                    } else {
+                        if let rebuildRoot {
+                            self.scanRoot = ScanStore.canonical(rebuildRoot)
+                            self.browserURL = self.scanRoot; self.mapURL = self.scanRoot
+                            self.notice = "Rebuilding your saved scan with the complete file index. Cleanup history was kept."
+                        }
+                        self.runFullScan(includeInventories: self.inventoryDate == nil)
+                    }
                 }
             } catch {
                 DispatchQueue.main.async {

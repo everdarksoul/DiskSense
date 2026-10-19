@@ -11,9 +11,9 @@ LintGoblin is a free, open-source macOS storage utility: a visual disk usage ana
 [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-343d52)](#build-and-run)
 [![Public beta](https://img.shields.io/badge/status-source%20beta-e7af6c)](https://github.com/everdarksoul/LintGoblin/releases)
 
-[Latest release](https://github.com/everdarksoul/LintGoblin/releases/tag/v0.5.0-beta.1) · [Build & run](#build-and-run) · [FAQ](docs/FAQ.md) · [Report a bug](https://github.com/everdarksoul/LintGoblin/issues/new/choose)
+[Latest release](https://github.com/everdarksoul/LintGoblin/releases/tag/v0.5.1-beta.1) · [Build & run](#build-and-run) · [FAQ](docs/FAQ.md) · [Report a bug](https://github.com/everdarksoul/LintGoblin/issues/new/choose)
 
-**0.5 source beta, formerly DiskSense.** Build it locally to try it. A signed, notarized consumer download is still pending; CI packages are development artifacts. macOS 13+ is the app target; automated tests run on macOS 14 and 15.
+**0.5.1 source beta, formerly DiskSense.** Build it locally to try it. A signed, notarized consumer download is still pending; CI packages are development artifacts. macOS 13+ is the app target; automated tests run on macOS 14 and 15.
 
 ## Watch the disk, lose the crumbs
 
@@ -58,7 +58,7 @@ Every removal has a separate review. The engine rejects protected roots, the run
 
 Trash operations keep receipts and verify the recorded destination before restore. Restore refuses to overwrite another file. LintGoblin never empties Trash automatically. Partial failures are reported; successful removal is not a promise of immediately reclaimed physical bytes.
 
-Scans measure allocated storage without following symlinks or requesting cloud downloads. Unreadable paths and index limits are reported. APFS clones, snapshots, purgeable space and Trash can make folder totals differ from volume usage. [Measurement and storage details →](docs/STORAGE.md)
+The complete readable scan is indexed without file-count or path-text cutoffs. Search displays up to 200 matches; its display limit does not cut index coverage. Scans measure allocated storage without following symlinks or requesting cloud downloads. Unreadable paths and index limits are reported. APFS clones, snapshots, purgeable space and Trash can make folder totals differ from volume usage. [Measurement and storage details →](docs/STORAGE.md)
 
 ## Build and run
 
@@ -72,13 +72,13 @@ cd LintGoblin
 open .build/Distribution/LintGoblin.app
 ```
 
-Builds produce `.build/Distribution/LintGoblin.app` and `LintGoblin-0.5.0.zip`. Local builds use ad-hoc signing unless `DISKSENSE_SIGNING_IDENTITY` names an existing Developer ID certificate. The internal executable, bundle identifier and `~/Library/Application Support/DiskSense` data directory retain their original names for compatibility.
+Builds produce `.build/Distribution/LintGoblin.app` and `LintGoblin-0.5.1.zip`. Local builds use ad-hoc signing unless `DISKSENSE_SIGNING_IDENTITY` names an existing Developer ID certificate. The internal executable, bundle identifier and `~/Library/Application Support/DiskSense` data directory retain their original names for compatibility.
 
 CI tests and builds on macOS 14 and 15. Regression tests use disposable fixtures and injected operations, covering protected paths, stale identities, running-app checks, symlinks, exact duplicates, index retention and scan lifecycle. Real home folders are never cleaned by the test suite. [Test details](Tests/README.md) · [Production release requirements](docs/RELEASE.md)
 
 ## What’s still missing
 
-A signed and notarized consumer installer, a vetted privileged helper, incremental indexing, automatic background cleanup and APFS snapshot management. Related-file matching is heuristic. Index coverage is bounded; search and duplicates cover indexed files only. Choose a smaller root for full coverage. macOS 13 and both CPU architectures still need broader hardware testing before we claim production support.
+A signed and notarized consumer installer, a vetted privileged helper, incremental indexing, automatic background cleanup and APFS snapshot management. Related-file matching is heuristic. macOS 13 and both CPU architectures still need broader hardware testing before we claim production support.
 
 ## Help the Goblin grow
 

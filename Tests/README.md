@@ -9,7 +9,7 @@ The suite covers:
 - App bundle measurement, related-file matching boundaries, and disjoint cleanup candidates.
 - Protected roots, running apps, ancestor symlinks, explicit external scopes, nested selections, stale review identity, and per-item Trash failures.
 - Recorded Trash restoration, untrusted sources, and refusing to overwrite a replacement file.
-- SQLite persistence, indexed browsing/search/categories, comparison/retention, batched cancellation cleanup, and keeping history when indexes are cleared.
+- Compact SQLite persistence, indexed browsing/search/categories, comparison/retention, cancellation cleanup with no orphaned rows, and keeping history when indexes are cleared. A 200,005-entry long-path fixture verifies coverage beyond the former cutoffs; retention tests enforce completeness of the newest scan even above its history budget.
 - Reopening a saved session without a scan and preserving it when its root becomes unavailable.
 - Treemap area, bounds, and non-overlapping geometry at different aspect ratios.
 

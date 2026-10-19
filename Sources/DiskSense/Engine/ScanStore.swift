@@ -53,15 +53,17 @@ final class SQLConnection {
 /// WAL permits instant read-only browsing of the last completed scan while a new
 /// scan is written. Each background operation owns its SQLite connection.
 final class ScanStore: @unchecked Sendable {
-    let maximumEntries: Int
+    let maximumEntries: Int?
+    private let historyBudgetBytes: Int64
     let databaseURL: URL
     let directory: URL
-    init(directory: URL, maximumEntries: Int = 150_000) throws {
-        self.maximumEntries = max(1, maximumEntries)
+    init(directory: URL, maximumEntries: Int? = nil, historyBudgetBytes: Int64 = 256 * 1024 * 1024) throws {
+        self.maximumEntries = maximumEntries.map { max(1, $0) }
+        self.historyBudgetBytes = max(0, historyBudgetBytes)
         self.directory = directory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-        databaseURL = directory.appendingPathComponent("scans-v4.sqlite")
+        databaseURL = directory.appendingPathComponent("scans-v5.sqlite")
         let isNew = !FileManager.default.fileExists(atPath: databaseURL.path)
         let db = try SQLConnection(url: databaseURL)
         try db.execute("""
@@ -70,13 +72,16 @@ final class ScanStore: @unchecked Sendable {
         PRAGMA journal_size_limit=8388608;
         PRAGMA wal_autocheckpoint=256;
         CREATE TABLE IF NOT EXISTS snapshots(id TEXT PRIMARY KEY,root TEXT NOT NULL,started REAL,finished REAL,bytes INTEGER,entry_count INTEGER,unreadable INTEGER);
-        CREATE TABLE IF NOT EXISTS entries(scan TEXT NOT NULL,path TEXT NOT NULL,parent TEXT NOT NULL,name TEXT,is_dir INTEGER,is_package INTEGER,bytes INTEGER,logical INTEGER,modified REAL,unreadable INTEGER,category TEXT,is_link INTEGER,PRIMARY KEY(scan,path));
-        CREATE INDEX IF NOT EXISTS children_idx ON entries(scan,parent,bytes DESC);
+        CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT);
+        CREATE TABLE IF NOT EXISTS catalog_scans(key INTEGER PRIMARY KEY,uuid TEXT NOT NULL UNIQUE);
+        CREATE TABLE IF NOT EXISTS directories(id INTEGER PRIMARY KEY,scan INTEGER NOT NULL REFERENCES catalog_scans(key) ON DELETE CASCADE,path TEXT NOT NULL,UNIQUE(scan,path));
+        CREATE TABLE IF NOT EXISTS entries(scan INTEGER NOT NULL REFERENCES catalog_scans(key) ON DELETE CASCADE,parent INTEGER NOT NULL REFERENCES directories(id) ON DELETE CASCADE,name TEXT NOT NULL,is_dir INTEGER,is_package INTEGER,bytes INTEGER,logical INTEGER,modified REAL,unreadable INTEGER,category TEXT,is_link INTEGER,PRIMARY KEY(parent,name));
+        CREATE INDEX IF NOT EXISTS children_idx ON entries(parent,bytes DESC);
         CREATE INDEX IF NOT EXISTS largest_idx ON entries(scan,is_dir,bytes DESC);
         CREATE TABLE IF NOT EXISTS history(id TEXT PRIMARY KEY,date REAL,payload BLOB);
         CREATE TABLE IF NOT EXISTS pending_scans(id TEXT PRIMARY KEY,pid INTEGER,started REAL);
         """)
-        if isNew { try db.execute("PRAGMA user_version=4") }
+        if isNew { try db.execute("PRAGMA user_version=5") }
         let columns = try db.statement("PRAGMA table_info(snapshots)")
         var hasCoverage = false
         while try db.step(columns) { if SQLConnection.text(columns, 1) == "index_truncated" { hasCoverage = true } }
@@ -90,7 +95,7 @@ final class ScanStore: @unchecked Sendable {
             if pid > 0 && kill(pid, 0) == -1 && errno == ESRCH { dead.append(SQLConnection.text(abandoned, 0)) }
         }
         for id in dead {
-            let cleanup = try db.statement("DELETE FROM entries WHERE scan=?")
+            let cleanup = try db.statement("DELETE FROM catalog_scans WHERE uuid=?")
             db.bind([id], to: cleanup); try db.run(cleanup); sqlite3_finalize(cleanup)
             let pending = try db.statement("DELETE FROM pending_scans WHERE id=?")
             db.bind([id], to: pending); try db.run(pending); sqlite3_finalize(pending)
@@ -107,6 +112,14 @@ final class ScanStore: @unchecked Sendable {
         let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         return try ScanStore(directory: support.appendingPathComponent("DiskSense", isDirectory: true))
     }
+    func preferredRebuildRoot() throws -> URL? {
+        let db = try SQLConnection(url: databaseURL)
+        let s = try db.statement("SELECT value FROM metadata WHERE key='rebuild_root'")
+        defer { sqlite3_finalize(s) }
+        guard try db.step(s) else { return nil }
+        let path = SQLConnection.text(s, 0)
+        return path.hasPrefix("/") ? URL(fileURLWithPath: path) : nil
+    }
     func begin(root: URL) throws -> ScanWriter { try ScanWriter(store: self, root: root) }
     func snapshots(root: String? = nil) throws -> [ScanSnapshot] {
         let db = try SQLConnection(url: databaseURL)
@@ -119,28 +132,39 @@ final class ScanStore: @unchecked Sendable {
         }
         return result
     }
-    private var columns: String { "path,parent,name,is_dir,is_package,bytes,logical,modified,unreadable,category,is_link" }
+    private var filePath: String { "CASE WHEN e.name='/' AND d.path='/' THEN '/' WHEN d.path='/' THEN '/'||e.name ELSE d.path||'/'||e.name END" }
+    private var columns: String { "\(filePath),d.path,e.name,e.is_dir,e.is_package,e.bytes,e.logical,e.modified,e.unreadable,e.category,e.is_link" }
+    private var joinedEntries: String { "entries e JOIN directories d ON d.id=e.parent" }
+    private func scanKey(_ snapshot: String, db: SQLConnection) throws -> Int64? {
+        let s = try db.statement("SELECT key FROM catalog_scans WHERE uuid=?")
+        defer { sqlite3_finalize(s) }; db.bind([snapshot], to: s)
+        return try db.step(s) ? sqlite3_column_int64(s, 0) : nil
+    }
     private func entry(_ s: OpaquePointer) -> CatalogEntry {
         CatalogEntry(path: SQLConnection.text(s, 0), parent: SQLConnection.text(s, 1), name: SQLConnection.text(s, 2), isDirectory: sqlite3_column_int(s, 3) != 0, isPackage: sqlite3_column_int(s, 4) != 0, bytes: sqlite3_column_int64(s, 5), logicalBytes: sqlite3_column_int64(s, 6), modified: Date(timeIntervalSince1970: sqlite3_column_double(s, 7)), unreadable: Int(sqlite3_column_int(s, 8)), category: StorageCategory(rawValue: SQLConnection.text(s, 9)) ?? .other, isSymbolicLink: sqlite3_column_int(s, 10) != 0)
     }
     func children(snapshot: String, parent: String) throws -> [CatalogEntry] {
         let db = try SQLConnection(url: databaseURL)
-        let s = try db.statement("SELECT \(columns) FROM entries WHERE scan=? AND parent=? AND path<>? ORDER BY bytes DESC,name LIMIT 10000")
-        defer { sqlite3_finalize(s) }; let path = Self.canonical(URL(fileURLWithPath: parent)).path; db.bind([snapshot, path, path], to: s)
+        guard let key = try scanKey(snapshot, db: db) else { return [] }
+        let s = try db.statement("SELECT \(columns) FROM \(joinedEntries) WHERE d.scan=? AND d.path=? AND (\(filePath))<>? ORDER BY e.bytes DESC,e.name")
+        defer { sqlite3_finalize(s) }
+        let path = Self.canonical(URL(fileURLWithPath: parent)).path
+        sqlite3_bind_int64(s, 1, key); db.bind([path, path], to: s, startingAt: 2)
         var result: [CatalogEntry] = []
         while try db.step(s) { result.append(entry(s)) }
         return result
     }
     func search(snapshot: String, text: String = "", minimumBytes: Int64 = 0, category: StorageCategory? = nil, filesOnly: Bool = true, olderThan: Date? = nil) throws -> [CatalogEntry] {
         let db = try SQLConnection(url: databaseURL)
-        var sql = "SELECT \(columns) FROM entries WHERE scan=? AND bytes>=?"
-        if filesOnly { sql += " AND is_dir=0" }
-        if !text.isEmpty { sql += " AND instr(lower(path),lower(?))>0" }
-        if category != nil { sql += " AND category=?" }
-        if olderThan != nil { sql += " AND modified<?" }
-        sql += " AND path<>(SELECT root FROM snapshots WHERE id=?) ORDER BY bytes DESC,path LIMIT 200"
+        guard let key = try scanKey(snapshot, db: db) else { return [] }
+        var sql = "SELECT \(columns) FROM \(joinedEntries) WHERE e.scan=? AND e.bytes>=?"
+        if filesOnly { sql += " AND e.is_dir=0" }
+        if !text.isEmpty { sql += " AND instr(lower(\(filePath)),lower(?))>0" }
+        if category != nil { sql += " AND e.category=?" }
+        if olderThan != nil { sql += " AND e.modified<?" }
+        sql += " AND (\(filePath))<>(SELECT root FROM snapshots WHERE id=?) ORDER BY e.bytes DESC,e.name,e.parent LIMIT 200"
         let s = try db.statement(sql); defer { sqlite3_finalize(s) }
-        db.bind([snapshot], to: s); sqlite3_bind_int64(s, 2, minimumBytes)
+        sqlite3_bind_int64(s, 1, key); sqlite3_bind_int64(s, 2, minimumBytes)
         var column: Int32 = 3
         if !text.isEmpty { db.bind([text], to: s, startingAt: column); column += 1 }
         if let category { db.bind([category.rawValue], to: s, startingAt: column); column += 1 }
@@ -152,8 +176,9 @@ final class ScanStore: @unchecked Sendable {
     }
     func categories(snapshot: String) throws -> [CategoryTotal] {
         let db = try SQLConnection(url: databaseURL)
+        guard let key = try scanKey(snapshot, db: db) else { return [] }
         let s = try db.statement("SELECT category,SUM(bytes) FROM entries WHERE scan=? AND is_dir=0 GROUP BY category ORDER BY SUM(bytes) DESC")
-        defer { sqlite3_finalize(s) }; db.bind([snapshot], to: s)
+        defer { sqlite3_finalize(s) }; sqlite3_bind_int64(s, 1, key)
         var result: [CategoryTotal] = []
         while try db.step(s) { result.append(CategoryTotal(category: StorageCategory(rawValue: SQLConnection.text(s, 0)) ?? .other, bytes: sqlite3_column_int64(s, 1))) }
         return result
@@ -168,7 +193,7 @@ final class ScanStore: @unchecked Sendable {
             .filter { $0.delta != 0 }.sorted { abs($0.delta) > abs($1.delta) }
     }
     func localDataBytes() -> Int64 {
-        ["scans-v4.sqlite", "scans-v4.sqlite-wal", "scans-v4.sqlite-shm", "scans.sqlite", "scans.sqlite-wal", "scans.sqlite-shm", "inventory.json"].reduce(0) { sum, name in
+        ["scans-v5.sqlite", "scans-v5.sqlite-wal", "scans-v5.sqlite-shm", "scans-v4.sqlite", "scans-v4.sqlite-wal", "scans-v4.sqlite-shm", "scans.sqlite", "scans.sqlite-wal", "scans.sqlite-shm", "inventory.json"].reduce(0) { sum, name in
             let attributes = try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(name).path)
             return sum + ((attributes?[.size] as? NSNumber)?.int64Value ?? 0)
         }
@@ -177,25 +202,27 @@ final class ScanStore: @unchecked Sendable {
     /// intentionally limited interactive search results.
     func duplicateCandidates(snapshot: String) throws -> [CatalogEntry] {
         let db = try SQLConnection(url: databaseURL)
+        guard let key = try scanKey(snapshot, db: db) else { return [] }
         let s = try db.statement("""
-        SELECT \(columns) FROM entries
-        WHERE scan=? AND is_dir=0 AND is_link=0 AND unreadable=0
-          AND category<>'Applications' AND logical>=1048576
-          AND logical IN (SELECT logical FROM entries WHERE scan=? AND is_dir=0 AND is_link=0 AND unreadable=0 AND category<>'Applications' AND logical>=1048576 GROUP BY logical HAVING COUNT(*)>1)
-        ORDER BY logical DESC,path
+        SELECT \(columns) FROM \(joinedEntries)
+        WHERE e.scan=? AND e.is_dir=0 AND e.is_link=0 AND e.unreadable=0
+          AND e.category<>'Applications' AND e.logical>=1048576
+          AND e.logical IN (SELECT logical FROM entries WHERE scan=? AND is_dir=0 AND is_link=0 AND unreadable=0 AND category<>'Applications' AND logical>=1048576 GROUP BY logical HAVING COUNT(*)>1)
+        ORDER BY e.logical DESC,e.name,e.parent
         """)
         defer { sqlite3_finalize(s) }
-        db.bind([snapshot, snapshot], to: s)
+        sqlite3_bind_int64(s, 1, key); sqlite3_bind_int64(s, 2, key)
         var result: [CatalogEntry] = []
         while try db.step(s) { result.append(entry(s)) }
         return result
     }
     /// Versioned index files avoid a multi-gigabyte DELETE/VACUUM migration.
     /// Copy all receipts successfully before retiring the obsolete file.
-    private func retireLegacyIndex() throws {
-        let legacy = directory.appendingPathComponent("scans.sqlite")
+    private func retireLegacyIndex(named name: String) throws {
+        let legacy = directory.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: legacy.path) else { return }
         var events: [CleanupEvent] = []
+        var rebuildRoot: String?
         do {
             let old = try SQLConnection(url: legacy, readOnly: true)
             if let pending = try? old.statement("SELECT pid FROM pending_scans") {
@@ -204,6 +231,10 @@ final class ScanStore: @unchecked Sendable {
                     let pid = pid_t(sqlite3_column_int(pending, 0))
                     if pid > 0 && kill(pid, 0) == 0 { return }
                 }
+            }
+            if name == "scans-v4.sqlite", let rootQuery = try? old.statement("SELECT root FROM snapshots ORDER BY finished DESC LIMIT 1") {
+                defer { sqlite3_finalize(rootQuery) }
+                if try old.step(rootQuery) { rebuildRoot = SQLConnection.text(rootQuery, 0) }
             }
             let receipts = try old.statement("SELECT payload FROM history")
             defer { sqlite3_finalize(receipts) }
@@ -222,6 +253,10 @@ final class ScanStore: @unchecked Sendable {
             _ = payload.withUnsafeBytes { sqlite3_bind_blob(insert, 3, $0.baseAddress, Int32($0.count), sqliteTransient) }
             try db.run(insert)
         }
+        if let rebuildRoot {
+            let hint = try db.statement("INSERT OR REPLACE INTO metadata VALUES('rebuild_root',?)")
+            db.bind([rebuildRoot], to: hint); try db.run(hint); sqlite3_finalize(hint)
+        }
         // Checkpoint imported receipts before unlinking the obsolete index.
         try db.execute("PRAGMA wal_checkpoint(FULL)")
         try FileManager.default.removeItem(at: legacy)
@@ -233,27 +268,17 @@ final class ScanStore: @unchecked Sendable {
     /// Only cached indexes are pruned. Cleanup receipts and inventory survive.
     /// Run off the main thread; compaction can take time for legacy large files.
     func maintain() throws {
-        try retireLegacyIndex()
+        try retireLegacyIndex(named: "scans.sqlite")
+        try retireLegacyIndex(named: "scans-v4.sqlite")
         let db = try SQLConnection(url: databaseURL)
-        let version = try db.statement("PRAGMA user_version")
-        let schemaVersion = try db.step(version) ? sqlite3_column_int(version, 0) : 0
-        sqlite3_finalize(version)
-        if schemaVersion < 4 {
-            // Old whole-disk indexes counted filesystem aliases. They cannot
-            // be repaired reliably; retain user files, inventory and receipts.
-            try db.execute("DELETE FROM entries; DELETE FROM snapshots; DELETE FROM pending_scans; PRAGMA user_version=4;")
-        }
-        let saved = try snapshots()
-        for snapshot in saved where snapshot.entryCount > maximumEntries + 10_001 {
-            let trim = try db.statement("DELETE FROM entries WHERE scan=? AND path<>? AND parent<>? AND path NOT IN (SELECT path FROM entries WHERE scan=? ORDER BY is_dir DESC,bytes DESC LIMIT ?)")
-            db.bind([snapshot.id, snapshot.root, snapshot.root, snapshot.id, String(maximumEntries)], to: trim)
-            try db.run(trim); sqlite3_finalize(trim)
-            let mark = try db.statement("UPDATE snapshots SET index_truncated=1,entry_count=(SELECT COUNT(*) FROM entries WHERE scan=?) WHERE id=?")
-            db.bind([snapshot.id, snapshot.id], to: mark); try db.run(mark); sqlite3_finalize(mark)
-        }
-        try db.execute("BEGIN IMMEDIATE; DELETE FROM entries WHERE scan IN (SELECT id FROM snapshots ORDER BY finished DESC LIMIT -1 OFFSET 4); DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY finished DESC LIMIT 4); COMMIT;")
-        // Evict older cached scans when live SQLite pages exceed the budget.
-        // A current over-budget index is reduced, never presented as complete.
+        try db.execute("""
+        BEGIN IMMEDIATE;
+        DELETE FROM catalog_scans WHERE uuid IN (SELECT id FROM snapshots ORDER BY finished DESC LIMIT -1 OFFSET 4);
+        DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY finished DESC LIMIT 4);
+        COMMIT;
+        """)
+        // The budget governs retained history, never completeness of the newest
+        // scan. Directory paths are shared instead of repeated for every file.
         func usedBytes() throws -> Int64 {
             func pragma(_ name: String) throws -> Int64 {
                 let s = try db.statement("PRAGMA " + name); defer { sqlite3_finalize(s) }
@@ -261,24 +286,13 @@ final class ScanStore: @unchecked Sendable {
             }
             return try (pragma("page_count") - pragma("freelist_count")) * pragma("page_size")
         }
-        let budget: Int64 = 256 * 1024 * 1024
         var retained = try snapshots()
-        while try usedBytes() > budget, retained.count > 1 {
+        while try usedBytes() > historyBudgetBytes, retained.count > 1 {
             let old = retained.removeLast()
-            let remove = try db.statement("DELETE FROM entries WHERE scan=?")
+            let remove = try db.statement("DELETE FROM catalog_scans WHERE uuid=?")
             db.bind([old.id], to: remove); try db.run(remove); sqlite3_finalize(remove)
             let header = try db.statement("DELETE FROM snapshots WHERE id=?")
             db.bind([old.id], to: header); try db.run(header); sqlite3_finalize(header)
-        }
-        if let current = retained.first {
-            var limit = maximumEntries / 2
-            while try usedBytes() > budget, limit >= 1000 {
-                let trim = try db.statement("DELETE FROM entries WHERE scan=? AND path<>? AND parent<>? AND path NOT IN (SELECT path FROM entries WHERE scan=? ORDER BY is_dir DESC,bytes DESC LIMIT ?)")
-                db.bind([current.id, current.root, current.root, current.id, String(limit)], to: trim); try db.run(trim); sqlite3_finalize(trim)
-                let mark = try db.statement("UPDATE snapshots SET index_truncated=1,entry_count=(SELECT COUNT(*) FROM entries WHERE scan=?) WHERE id=?")
-                db.bind([current.id, current.id], to: mark); try db.run(mark); sqlite3_finalize(mark)
-                limit /= 2
-            }
         }
         let pages = try db.statement("PRAGMA freelist_count")
         let freePages = try db.step(pages) ? sqlite3_column_int64(pages, 0) : 0
@@ -288,7 +302,7 @@ final class ScanStore: @unchecked Sendable {
     }
     func clearScans() throws {
         let db = try SQLConnection(url: databaseURL)
-        try db.execute("DELETE FROM entries; DELETE FROM snapshots; DELETE FROM pending_scans; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
+        try db.execute("DELETE FROM catalog_scans; DELETE FROM snapshots; DELETE FROM pending_scans; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
     }
     func saveInventory(apps: [AppEntry], junk: [JunkItem]) throws {
         try JSONEncoder().encode(SavedInventory(date: Date(), apps: apps, junk: junk)).write(to: directory.appendingPathComponent("inventory.json"), options: .atomic)
@@ -329,10 +343,12 @@ final class ScanWriter {
     private(set) var count = 0
     private(set) var failure: Error?
     private var closed = false
-    private let maximumEntries: Int
+    private let maximumEntries: Int?
     private let store: ScanStore
-    private var essentialCount = 0
-    private var indexedTextBytes = 0
+    private let key: Int64
+    private let findDirectory: OpaquePointer
+    private let insertDirectory: OpaquePointer
+    private var directoryIDs: [String: Int64] = [:]
     private(set) var indexTruncated = false
     init(store: ScanStore, root: URL) throws {
         self.store = store
@@ -340,35 +356,67 @@ final class ScanWriter {
         self.root = ScanStore.canonical(root)
         self.excludedPath = ScanStore.canonical(store.directory).path
         db = try SQLConnection(url: store.databaseURL)
-        insert = try db.statement("INSERT OR REPLACE INTO entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+        insert = try db.statement("INSERT OR REPLACE INTO entries VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+        findDirectory = try db.statement("SELECT id FROM directories WHERE scan=? AND path=?")
+        insertDirectory = try db.statement("INSERT INTO directories(scan,path) VALUES(?,?)")
         try db.execute("BEGIN IMMEDIATE")
+        let scan = try db.statement("INSERT INTO catalog_scans(uuid) VALUES(?)")
+        db.bind([id], to: scan)
+        do { try db.run(scan) } catch { sqlite3_finalize(scan); throw error }
+        sqlite3_finalize(scan)
+        key = sqlite3_last_insert_rowid(db.handle)
         let pending = try db.statement("INSERT INTO pending_scans VALUES(?,?,?)")
         db.bind([id], to: pending); sqlite3_bind_int(pending, 2, getpid()); sqlite3_bind_double(pending, 3, started.timeIntervalSince1970)
         try db.run(pending); sqlite3_finalize(pending)
     }
     deinit {
-        sqlite3_finalize(insert)
+        sqlite3_finalize(insert); sqlite3_finalize(findDirectory); sqlite3_finalize(insertDirectory)
         if !closed { discard() }
     }
-    func excludes(_ path: String) -> Bool { path == excludedPath || path.hasPrefix(excludedPath + "/") }
+    func excludes(_ path: String) -> Bool {
+        // The startup data volume exposes the same home directory through a
+        // firmlink alias. Never index our own growing database through either.
+        func dataPath(_ value: String) -> String {
+            let prefix = "/System/Volumes/Data"
+            return value.hasPrefix(prefix + "/") ? String(value.dropFirst(prefix.count)) : value
+        }
+        let candidate = dataPath(path), excluded = dataPath(excludedPath)
+        return candidate == excluded || candidate.hasPrefix(excluded + "/")
+    }
+    private func directoryID(for path: String) throws -> Int64 {
+        if let cached = directoryIDs[path] { return cached }
+        sqlite3_reset(findDirectory); sqlite3_clear_bindings(findDirectory)
+        defer { sqlite3_reset(findDirectory) }
+        sqlite3_bind_int64(findDirectory, 1, key); db.bind([path], to: findDirectory, startingAt: 2)
+        let value: Int64
+        if try db.step(findDirectory) { value = sqlite3_column_int64(findDirectory, 0) }
+        else {
+            sqlite3_reset(insertDirectory); sqlite3_clear_bindings(insertDirectory)
+            sqlite3_bind_int64(insertDirectory, 1, key); db.bind([path], to: insertDirectory, startingAt: 2)
+            try db.run(insertDirectory); value = sqlite3_last_insert_rowid(db.handle)
+        }
+        // Keep only a small working set; SQLite holds the complete directory map.
+        if directoryIDs.count >= 4096 { directoryIDs.removeAll(keepingCapacity: true) }
+        directoryIDs[path] = value
+        return value
+    }
     func record(_ entry: CatalogEntry) {
         guard failure == nil, !closed else { return }
+        // Explicit limits exist only for fault-injection tests. Live indexes are
+        // complete regardless of file count, folder depth or path-text length.
         let essential = entry.path == root.path || entry.parent == root.path
-        if essential && essentialCount >= 10_000 && entry.path != root.path { indexTruncated = true; return }
-        if essential { essentialCount += 1 }
-        if (count >= maximumEntries || indexedTextBytes >= 32 * 1024 * 1024) && !essential {
-            indexTruncated = true; return
-        }
-        indexedTextBytes += entry.path.utf8.count + entry.parent.utf8.count + entry.name.utf8.count
-        sqlite3_reset(insert); sqlite3_clear_bindings(insert)
-        db.bind([id, entry.path, entry.parent, entry.name], to: insert)
-        sqlite3_bind_int(insert, 5, entry.isDirectory ? 1 : 0)
-        sqlite3_bind_int(insert, 6, entry.isPackage ? 1 : 0)
-        sqlite3_bind_int64(insert, 7, entry.bytes); sqlite3_bind_int64(insert, 8, entry.logicalBytes)
-        sqlite3_bind_double(insert, 9, entry.modified.timeIntervalSince1970)
-        sqlite3_bind_int(insert, 10, Int32(entry.unreadable)); db.bind([entry.category.rawValue], to: insert, startingAt: 11)
-        sqlite3_bind_int(insert, 12, entry.isSymbolicLink ? 1 : 0)
+        if let maximumEntries, count >= maximumEntries, !essential { indexTruncated = true; return }
         do {
+            let parent = try directoryID(for: entry.parent)
+            sqlite3_reset(insert); sqlite3_clear_bindings(insert)
+            sqlite3_bind_int64(insert, 1, key); sqlite3_bind_int64(insert, 2, parent)
+            db.bind([entry.name], to: insert, startingAt: 3)
+            sqlite3_bind_int(insert, 4, entry.isDirectory ? 1 : 0)
+            sqlite3_bind_int(insert, 5, entry.isPackage ? 1 : 0)
+            sqlite3_bind_int64(insert, 6, entry.bytes); sqlite3_bind_int64(insert, 7, entry.logicalBytes)
+            sqlite3_bind_double(insert, 8, entry.modified.timeIntervalSince1970)
+            sqlite3_bind_int(insert, 9, Int32(entry.unreadable)); db.bind([entry.category.rawValue], to: insert, startingAt: 10)
+            sqlite3_bind_int(insert, 11, entry.isSymbolicLink ? 1 : 0)
             try db.run(insert); count += 1
             if count % 2000 == 0 { try db.execute("COMMIT; BEGIN IMMEDIATE") }
         } catch { failure = error }
@@ -381,12 +429,13 @@ final class ScanWriter {
         sqlite3_bind_int64(s, 5, bytes); sqlite3_bind_int64(s, 6, Int64(count)); sqlite3_bind_int64(s, 7, Int64(unreadable))
         sqlite3_bind_int(s, 8, indexTruncated ? 1 : 0)
         try db.run(s)
+        try db.execute("DELETE FROM metadata WHERE key='rebuild_root'")
         let pending = try db.statement("DELETE FROM pending_scans WHERE id=?")
         db.bind([id], to: pending); try db.run(pending); sqlite3_finalize(pending)
         try db.execute("COMMIT"); closed = true
         // Keep the latest two completed scans per root; cancelled scans never
         // become selectable. Remove orphaned partial rows at the same time.
-        let prune = try db.statement("DELETE FROM entries WHERE scan IN (SELECT id FROM snapshots WHERE root=? ORDER BY finished DESC LIMIT -1 OFFSET 2)")
+        let prune = try db.statement("DELETE FROM catalog_scans WHERE uuid IN (SELECT id FROM snapshots WHERE root=? ORDER BY finished DESC LIMIT -1 OFFSET 2)")
         db.bind([root.path], to: prune); try db.run(prune); sqlite3_finalize(prune)
         let pruneSnapshots = try db.statement("DELETE FROM snapshots WHERE root=? AND id NOT IN (SELECT id FROM snapshots WHERE root=? ORDER BY finished DESC LIMIT 2)")
         db.bind([root.path, root.path], to: pruneSnapshots); try db.run(pruneSnapshots); sqlite3_finalize(pruneSnapshots)
@@ -396,7 +445,7 @@ final class ScanWriter {
     func discard() {
         guard !closed else { return }
         try? db.execute("ROLLBACK")
-        if let s = try? db.statement("DELETE FROM entries WHERE scan=?") { db.bind([id], to: s); try? db.run(s); sqlite3_finalize(s) }
+        if let s = try? db.statement("DELETE FROM catalog_scans WHERE uuid=?") { db.bind([id], to: s); try? db.run(s); sqlite3_finalize(s) }
         if let s = try? db.statement("DELETE FROM pending_scans WHERE id=?") { db.bind([id], to: s); try? db.run(s); sqlite3_finalize(s) }
         closed = true
     }

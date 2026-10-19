@@ -28,6 +28,10 @@ macOS permissions are tied to the app identity. Replacing a locally ad-hoc-signe
 
 No. When reviewing an app’s connected files, only the associated app must quit. Ask app to quit sends a normal quit request, allowing the app to handle unsaved work. It does not force quit. A running associated app is checked again at removal time. Shared data can still affect other apps, so review ownership yourself.
 
+## What was “Index budget reached”?
+
+Versions through 0.5.0 stopped recording file entries at 150,000 rows or 32 MiB of repeated path text. Folder totals still measured the disk, but search and duplicates were incomplete. Version 0.5.1 replaces that layout with shared directory paths and removes both default cutoffs. It rebuilds older indexes once and preserves cleanup history. The storage budget now evicts old scans instead of cutting the newest one. Permissions and disconnected drives can still limit coverage; the app reports those failures.
+
 ## Why doesn’t deleting a large file free the same amount of space?
 
 Allocated file sizes are estimates of storage associated with paths. APFS clones, snapshots, open file handles and purgeable storage affect reclaimed capacity. Items moved to Trash still use space until Trash is emptied in Finder. LintGoblin reports removals and measured sizes separately from volume capacity.
