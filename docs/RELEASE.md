@@ -14,12 +14,12 @@ With an existing Developer ID certificate in Keychain:
 
 ```sh
 DISKSENSE_SIGNING_IDENTITY='Developer ID Application: YOUR IDENTITY' ./scripts/build-app.sh
-xcrun notarytool submit .build/Distribution/DiskSense-0.4.0.zip --keychain-profile DISKSENSE_NOTARY --wait
-xcrun stapler staple .build/Distribution/DiskSense.app
-xcrun stapler validate .build/Distribution/DiskSense.app
-spctl --assess --type execute --verbose .build/Distribution/DiskSense.app
-ditto -c -k --sequesterRsrc --keepParent .build/Distribution/DiskSense.app .build/Distribution/DiskSense-0.4.0.zip
-shasum -a 256 .build/Distribution/DiskSense-0.4.0.zip
+xcrun notarytool submit .build/Distribution/LintGoblin-0.5.0.zip --keychain-profile DISKSENSE_NOTARY --wait
+xcrun stapler staple .build/Distribution/LintGoblin.app
+xcrun stapler validate .build/Distribution/LintGoblin.app
+spctl --assess --type execute --verbose .build/Distribution/LintGoblin.app
+ditto -c -k --sequesterRsrc --keepParent .build/Distribution/LintGoblin.app .build/Distribution/LintGoblin-0.5.0.zip
+shasum -a 256 .build/Distribution/LintGoblin-0.5.0.zip
 ```
 
 The Keychain profile must already be configured by the developer; no passwords or signing keys belong in this repository. Submit/staple/assessment must actually succeed before describing a build as notarized. Never tell users to disable Gatekeeper or other system protections.

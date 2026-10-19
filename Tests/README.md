@@ -13,6 +13,6 @@ The suite covers:
 - Reopening a saved session without a scan and preserving it when its root becomes unavailable.
 - Treemap area, bounds, and non-overlapping geometry at different aspect ratios.
 
-Tests create disposable filesystem fixtures and inject Trash operations. They do not scan the user's disk, delete user data, or empty the real Trash. Live UI verification is separate from the regression suite.
+Tests create disposable filesystem fixtures and inject Trash operations. Permanent-removal tests delete only their generated fixtures; they also cover failures, symlinks, associated-app relaunch and legacy history decoding. They do not scan the user's disk, delete user data, or empty the real Trash. Live UI verification is separate from the regression suite.
 
 The expanded suite also covers exact duplicate hashing, keeper protection, file changes between verification and cleanup, cache-only goal planning, reused Trash paths, SQLite read errors, and refreshing an open indexed descendant after a new scan.

@@ -19,11 +19,18 @@ func render(_ size: Int, name: String) throws {
         wedge.appendArc(withCenter: center, radius: 305, startAngle: range.0, endAngle: range.1)
         wedge.close(); colors[i].setFill(); wedge.fill()
     }
+    colors[0].setFill()
+    for points in [[NSPoint(x: 218, y: 650), NSPoint(x: 440, y: 570), NSPoint(x: 365, y: 440)],
+                   [NSPoint(x: 806, y: 650), NSPoint(x: 584, y: 570), NSPoint(x: 659, y: 440)]] {
+        let ear = NSBezierPath(); ear.move(to: points[0]); ear.line(to: points[1]); ear.line(to: points[2]); ear.close(); ear.fill()
+    }
     NSColor(calibratedRed: 0.06, green: 0.24, blue: 0.28, alpha: 1).setFill()
     NSBezierPath(ovalIn: NSRect(x: 340, y: 348, width: 344, height: 344)).fill()
     NSColor.white.withAlphaComponent(0.92).setFill()
     NSBezierPath(roundedRect: NSRect(x: 451, y: 489, width: 30, height: 66), xRadius: 15, yRadius: 15).fill()
     NSBezierPath(roundedRect: NSRect(x: 543, y: 489, width: 30, height: 66), xRadius: 15, yRadius: 15).fill()
+    NSColor.white.withAlphaComponent(0.85).setStroke()
+    let grin = NSBezierPath(); grin.move(to: NSPoint(x: 479, y: 440)); grin.line(to: NSPoint(x: 548, y: 454)); grin.lineWidth = 9; grin.lineCapStyle = .round; grin.stroke()
     NSColor.white.withAlphaComponent(0.28).setFill()
     NSBezierPath(roundedRect: NSRect(x: 342, y: 135, width: 340, height: 18), xRadius: 9, yRadius: 9).fill()
     NSGraphicsContext.restoreGraphicsState()

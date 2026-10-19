@@ -54,12 +54,12 @@ enum CleanupError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unsafePath(let path): return "Protected location cannot be moved to Trash: \(path)"
+        case .unsafePath(let path): return "Protected location cannot be removed: \(path)"
         case .missingPath(let path): return "Item no longer exists: \(path)"
         case .changedPath(let path): return "This item changed after review. Review it again before removing: \(path)"
         case .unverifiedTrash(let path): return "This older cleanup record cannot verify the item in Trash. Inspect and restore it through Finder: \(path)"
         case .changedTrash(let path): return "The item at this Trash location no longer matches the cleanup record. Inspect and restore it through Finder: \(path)"
-        case .runningApplication(let path): return "Quit the application before moving it to Trash: \(path)"
+        case .runningApplication(let path): return "Quit the associated application before removing its files: \(path)"
         }
     }
 }
@@ -73,6 +73,8 @@ final class CleanupService {
     private let ownApplicationURL: URL
     private let runningApplicationURLs: () -> [URL]
     private let trashOperation: TrashOperation?
+    private let deleteOperation: TrashOperation?
+    private let associatedApplicationURL: URL?
 
     init(fileManager: FileManager = .default,
          homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
@@ -81,19 +83,27 @@ final class CleanupService {
          runningApplicationURLs: @escaping () -> [URL] = {
              NSWorkspace.shared.runningApplications.compactMap(\.bundleURL)
          },
-         trashOperation: TrashOperation? = nil) {
+         trashOperation: TrashOperation? = nil,
+         deleteOperation: TrashOperation? = nil,
+         associatedApplicationURL: URL? = nil) {
         fm = fileManager
         home = Self.normalizeDataAlias(homeDirectory.resolvingSymlinksInPath().standardizedFileURL)
         self.allowedRoots = allowedRoots.map { Self.normalizeDataAlias($0.resolvingSymlinksInPath().standardizedFileURL) }
         self.ownApplicationURL = Self.normalizeDataAlias(ownApplicationURL.resolvingSymlinksInPath().standardizedFileURL)
         self.runningApplicationURLs = runningApplicationURLs
         self.trashOperation = trashOperation
+        self.deleteOperation = deleteOperation
+        self.associatedApplicationURL = associatedApplicationURL
     }
 
     /// Reject unsafe selections, then collapse duplicates and children of selected folders.
     /// Resolve ancestor symlinks, while retaining a final symlink so only the link is trashed.
     func validate(_ candidates: [CleanupCandidate]) throws -> [CleanupCandidate] {
         let running = runningApplicationURLs().map { Self.normalizeDataAlias($0.resolvingSymlinksInPath().standardizedFileURL) }
+        if let associatedApplicationURL {
+            let app = Self.normalizeDataAlias(associatedApplicationURL.resolvingSymlinksInPath())
+            if running.contains(where: { $0.path == app.path }) { throw CleanupError.runningApplication(app.path) }
+        }
         var unique: [String: CleanupCandidate] = [:]
         for candidate in candidates {
             guard candidate.url.isFileURL else { throw CleanupError.unsafePath(candidate.url.absoluteString) }
@@ -145,6 +155,29 @@ final class CleanupService {
             }
         }
         return CleanupResult(moved: moved, failures: failures, receipts: receipts)
+    }
+
+    /// Irreversible removal is a separate UI-confirmed operation. It uses the
+    /// same path/running-app/identity checks and never elevates privileges.
+    func deletePermanently(_ candidates: [CleanupCandidate]) -> CleanupResult {
+        let validated: [CleanupCandidate]
+        do { validated = try validate(candidates) }
+        catch { return CleanupResult(moved: [], failures: [error.localizedDescription]) }
+        var removed: [URL] = [], failures: [String] = [], receipts: [TrashReceipt] = []
+        for candidate in validated {
+            do {
+                guard let current = try validate([candidate]).first, current.url.path == candidate.url.path else {
+                    throw CleanupError.unsafePath(candidate.url.path)
+                }
+                if let deleteOperation { try deleteOperation(current.url) }
+                else { try fm.removeItem(at: current.url) }
+                removed.append(current.url)
+                receipts.append(TrashReceipt(originalURL: current.url, trashURL: nil, bytes: current.bytes))
+            } catch {
+                failures.append("\(candidate.url.lastPathComponent): \(error.localizedDescription). If administrator permission is required, reveal this item in Finder; this beta does not elevate privileges.")
+            }
+        }
+        return CleanupResult(moved: removed, failures: failures, receipts: receipts)
     }
 
     /// Restore only a recorded Trash destination, never overwrite a new file,

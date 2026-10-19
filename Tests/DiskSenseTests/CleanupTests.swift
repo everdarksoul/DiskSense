@@ -286,4 +286,87 @@ struct CleanupTests {
         }
     }
 
+    @Test func permanentRemovalDeletesOnlyTheReviewedFixture() throws {
+        try withFixture { home in
+            let selected = home.appendingPathComponent("delete.txt")
+            let keeper = home.appendingPathComponent("keep.txt")
+            try Data("remove".utf8).write(to: selected)
+            try Data("keep".utf8).write(to: keeper)
+            let cleaner = CleanupService(homeDirectory: home, ownApplicationURL: URL(fileURLWithPath: "/Applications/Fake.app"), runningApplicationURLs: { [] })
+            let reviewed = try cleaner.validate([candidate(selected)])
+            let result = cleaner.deletePermanently(reviewed)
+            #expect(result.failures.isEmpty && result.moved.count == 1)
+            #expect(!FileManager.default.fileExists(atPath: selected.path))
+            #expect(FileManager.default.fileExists(atPath: keeper.path))
+            #expect(result.receipts.first?.trashURL == nil)
+        }
+    }
+    @Test func permanentRemovalRejectsStaleIdentityAndProtectedRoots() throws {
+        try withFixture { home in
+            let selected = home.appendingPathComponent("changed.txt")
+            try Data("before".utf8).write(to: selected)
+            let cleaner = service(home)
+            let reviewed = try cleaner.validate([candidate(selected)])
+            try FileManager.default.removeItem(at: selected)
+            try Data("replacement".utf8).write(to: selected)
+            #expect(cleaner.deletePermanently(reviewed).moved.isEmpty)
+            #expect(cleaner.deletePermanently([candidate(home)]).moved.isEmpty)
+            #expect(FileManager.default.fileExists(atPath: selected.path))
+        }
+    }
+    @Test func permanentRemovalOfFinalLinkPreservesItsTarget() throws {
+        try withFixture { home in
+            let target = home.appendingPathComponent("keep.txt")
+            let link = home.appendingPathComponent("link")
+            try Data("keep".utf8).write(to: target)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+            let cleaner = CleanupService(homeDirectory: home, ownApplicationURL: URL(fileURLWithPath: "/Applications/Fake.app"), runningApplicationURLs: { [] })
+            let reviewed = try cleaner.validate([candidate(link)])
+            #expect(cleaner.deletePermanently(reviewed).failures.isEmpty)
+            #expect(FileManager.default.fileExists(atPath: target.path))
+            #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil)
+        }
+    }
+    @Test func associatedRunningAppBlocksOnlyItsConnectedCleanup() throws {
+        try withFixture { home in
+            let cache = home.appendingPathComponent("cache")
+            try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+            let app = URL(fileURLWithPath: "/Applications/Associated.app")
+            let other = URL(fileURLWithPath: "/Applications/Other.app")
+            let cleaner = CleanupService(homeDirectory: home, runningApplicationURLs: { [app, other] }, associatedApplicationURL: app)
+            #expect(throws: CleanupError.self) { try cleaner.validate([candidate(cache)]) }
+            let allowed = CleanupService(homeDirectory: home, runningApplicationURLs: { [other] }, associatedApplicationURL: app)
+            #expect(try allowed.validate([candidate(cache)]).count == 1)
+        }
+    }
+
+    @Test func permanentFailureIsReportedAndNeverCreatesASuccessReceipt() throws {
+        try withFixture { home in
+            let selected = home.appendingPathComponent("permission-denied.txt")
+            try Data("keep".utf8).write(to: selected)
+            let cleaner = CleanupService(homeDirectory: home, runningApplicationURLs: { [] }, deleteOperation: { _ in
+                throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)
+            })
+            let result = cleaner.deletePermanently(try cleaner.validate([candidate(selected)]))
+            #expect(result.moved.isEmpty && result.receipts.isEmpty)
+            #expect(result.failures.count == 1)
+            #expect(result.failures.first?.contains("Finder") == true)
+            #expect(try Data(contentsOf: selected) == Data("keep".utf8))
+        }
+    }
+    @Test func associatedAppRelaunchAfterReviewBlocksRemoval() throws {
+        try withFixture { home in
+            let file = home.appendingPathComponent("cache.txt")
+            try Data("keep".utf8).write(to: file)
+            let app = URL(fileURLWithPath: "/Applications/Associated.app")
+            var running: [URL] = []
+            let cleaner = CleanupService(homeDirectory: home, runningApplicationURLs: { running }, associatedApplicationURL: app)
+            let reviewed = try cleaner.validate([candidate(file)])
+            running = [app]
+            #expect(cleaner.deletePermanently(reviewed).moved.isEmpty)
+            #expect(cleaner.moveToTrash(reviewed).moved.isEmpty)
+            #expect(FileManager.default.fileExists(atPath: file.path))
+        }
+    }
+
 }

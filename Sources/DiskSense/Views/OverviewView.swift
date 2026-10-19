@@ -49,7 +49,7 @@ struct OverviewView: View {
                 if !model.largestFiles.isEmpty { largestFiles }
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle")
-                    Text("Measured sizes are allocated storage, not a promise of space reclaimed. Volume usage also includes macOS, other folders and snapshots. DiskSense’s own index is excluded from indexed scans. Trash still occupies storage until emptied.")
+                    Text("Measured sizes are allocated storage, not a promise of space reclaimed. Volume usage also includes macOS, other folders and snapshots. LintGoblin’s own index is excluded from indexed scans. Trash still occupies storage until emptied.")
                 }.font(.caption).foregroundStyle(.secondary)
                 if model.overview.unreadableCount > 0 {
                     Label("\(model.overview.unreadableCount) entries could not be read. Those locations are marked; totals are partial.", systemImage: "lock").font(.caption).foregroundStyle(.orange)

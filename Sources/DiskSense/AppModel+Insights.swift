@@ -283,7 +283,7 @@ extension AppModel {
         let report = Report(generatedAt: Date(), snapshot: snapshot, volume: overview, categories: categoryTotals, largestFiles: largestFiles, changes: changes,
             note: "Allocated storage, not guaranteed reclaimable space. Inaccessible entries are omitted; compare coverage counts before interpreting changes.")
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]; panel.nameFieldStringValue = "DiskSense-Report.json"
+        panel.allowedContentTypes = [.json]; panel.nameFieldStringValue = "LintGoblin-Report.json"
         panel.message = "Save a local storage report. It includes file paths."
         let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard response == .OK, let url = panel.url else { return }

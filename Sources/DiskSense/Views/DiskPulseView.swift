@@ -19,11 +19,13 @@ struct DiskPulseMark: View {
                     Circle().trim(from: 0.47, to: 0.72).stroke(Color(red: 0.48, green: 0.54, blue: 0.96), style: StrokeStyle(lineWidth: size * 0.12, lineCap: .round))
                     Circle().trim(from: 0.76, to: 0.975).stroke(Color(red: 0.94, green: 0.66, blue: 0.48), style: StrokeStyle(lineWidth: size * 0.12, lineCap: .round))
                 }.frame(width: size * 0.75, height: size * 0.75).rotationEffect(.degrees(angle - 90))
+                GoblinEars().fill(Color(red: 0.38, green: 0.86, blue: 0.76)).frame(width: size * 0.76, height: size * 0.38).offset(y: -size * 0.05 + bob)
                 Circle().fill(Color(red: 0.06, green: 0.24, blue: 0.28)).frame(width: size * 0.49, height: size * 0.49)
                 HStack(spacing: size * 0.08) {
                     Capsule().fill(.white.opacity(0.95)).frame(width: size * 0.045, height: size * 0.095)
                     Capsule().fill(.white.opacity(0.95)).frame(width: size * 0.045, height: size * 0.095)
                 }.offset(y: bob)
+                Capsule().fill(.white.opacity(0.85)).frame(width: size * 0.11, height: size * 0.018).rotationEffect(.degrees(-12)).offset(y: size * 0.105 + bob)
                 Circle().fill(.teal).frame(width: size * 0.035, height: size * 0.035).offset(x: size * 0.43, y: -size * 0.3 + bob)
                 Circle().fill(.indigo.opacity(0.65)).frame(width: size * 0.025, height: size * 0.025).offset(x: -size * 0.43, y: size * 0.28 - bob)
             }.frame(width: size, height: size)
@@ -43,7 +45,7 @@ struct DiskPulsePanel: View {
             HStack(spacing: 14) {
                 DiskPulseMark(size: 78)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Meet Orbit.").font(.title2.bold())
+                    Text("Meet the Goblin.").font(.title2.bold())
                     Text(model.isScanning ? "Your storage scout is exploring." : "A little perspective. A lot more space.").font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -72,7 +74,7 @@ struct DiskPulsePanel: View {
                 Button { open(.plan) } label: { Label("Make room", systemImage: "sparkles").frame(maxWidth: .infinity) }
             }
             HStack {
-                Button("Open DiskSense") { open(.overview) }
+                Button("Open LintGoblin") { open(.overview) }
                 Spacer()
                 Button { model.runFullScan() } label: { Image(systemName: "arrow.clockwise") }.help("Refresh selected location").disabled(model.isScanning || model.isCleaning)
             }.font(.caption)
@@ -111,3 +113,18 @@ struct CommandPaletteView: View {
     private func go(_ tab: SidebarTab) { model.selection = tab; model.showingCommandPalette = false }
 }
 private final class CommandPaletteState: ObservableObject { @Published var query = "" }
+
+private struct GoblinEars: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: 0, y: 0))
+            p.addLine(to: CGPoint(x: rect.width * 0.39, y: rect.height * 0.36))
+            p.addLine(to: CGPoint(x: rect.width * 0.26, y: rect.height))
+            p.closeSubpath()
+            p.move(to: CGPoint(x: rect.width, y: 0))
+            p.addLine(to: CGPoint(x: rect.width * 0.61, y: rect.height * 0.36))
+            p.addLine(to: CGPoint(x: rect.width * 0.74, y: rect.height))
+            p.closeSubpath()
+        }
+    }
+}

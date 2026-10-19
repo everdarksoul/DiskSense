@@ -108,11 +108,14 @@ struct TrashReceipt: Codable, Identifiable, Hashable {
     }
 }
 
+enum CleanupDisposition: String, Codable { case trash, permanent }
+
 struct CleanupEvent: Codable, Identifiable {
     let id: String
     let date: Date
     let receipts: [TrashReceipt]
     let failures: [String]
     var restored: [String]
+    var disposition: CleanupDisposition? = nil
     var movedBytes: Int64 { receipts.reduce(0) { $0 + $1.bytes } }
 }

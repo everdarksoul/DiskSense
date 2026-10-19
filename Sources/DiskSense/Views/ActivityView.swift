@@ -8,16 +8,16 @@ struct ActivityView: View {
             Text("Cleanup activity stays on this Mac. Restore moves an item back only while it remains in its recorded Trash location, and never overwrites an existing file.")
                 .font(.callout).foregroundStyle(.secondary)
             if model.cleanupHistory.isEmpty {
-                InsightEmptyView(symbol: "clock.arrow.circlepath", title: "Nothing removed yet", message: "When you move items to Trash with DiskSense, their original paths, sizes and outcomes appear here.")
+                InsightEmptyView(symbol: "clock.arrow.circlepath", title: "Nothing removed yet", message: "When you move items to Trash with LintGoblin, their original paths, sizes and outcomes appear here.")
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         ForEach(model.cleanupHistory) { event in
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack {
-                                    Image(systemName: "trash.circle.fill").font(.title2).foregroundStyle(.teal)
+                                    Image(systemName: event.disposition == .permanent ? "xmark.circle.fill" : "trash.circle.fill").font(.title2).foregroundStyle(.teal)
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text("\(event.receipts.count) item(s) · \(ByteFormat.string(event.movedBytes)) moved to Trash").font(.headline)
+                                        Text("\(event.receipts.count) item(s) · \(ByteFormat.string(event.movedBytes)) \(event.disposition == .permanent ? "permanently deleted" : "moved to Trash")").font(.headline)
                                         Text(event.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
@@ -36,7 +36,7 @@ struct ActivityView: View {
                                             if let trash = receipt.trashURL {
                                                 Button("Reveal in Trash") { model.reveal(trash) }.controlSize(.small)
                                                 Button("Restore") { model.restore(receipt, event: event) }.controlSize(.small).disabled(model.isCleaning)
-                                            } else { Text("Use Finder to restore").font(.caption).foregroundStyle(.secondary) }
+                                            } else { Text(event.disposition == .permanent ? "Permanently deleted · no restore" : "Use Finder to restore").font(.caption).foregroundStyle(.secondary) }
                                         }
                                     }
                                 }

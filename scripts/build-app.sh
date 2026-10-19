@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 swift build -c release --scratch-path .build/scan-fix
 bin_dir=$(swift build -c release --scratch-path .build/scan-fix --show-bin-path)
 out="$PWD/.build/Distribution"
-app="$out/DiskSense.app"
+app="$out/LintGoblin.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$out/DiskSense.iconset"
 /usr/bin/install -m 755 "$bin_dir/DiskSense" "$app/Contents/MacOS/DiskSense"
 swift scripts/MakeIcon.swift "$out/DiskSense.iconset"
@@ -15,13 +15,13 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>DiskSense</string>
-<key>CFBundleDisplayName</key><string>DiskSense</string>
+<key>CFBundleName</key><string>LintGoblin</string>
+<key>CFBundleDisplayName</key><string>LintGoblin</string>
 <key>CFBundleIdentifier</key><string>com.sar.disksense</string>
 <key>CFBundleExecutable</key><string>DiskSense</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.4.0</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>0.5.0</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
@@ -34,5 +34,5 @@ else
   /usr/bin/codesign --force --sign - "$app"
 fi
 /usr/bin/codesign --verify --strict "$app"
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app" "$out/DiskSense-0.4.0.zip"
-printf 'Built %s\n' "$app" "$out/DiskSense-0.4.0.zip"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app" "$out/LintGoblin-0.5.0.zip"
+printf 'Built %s\n' "$app" "$out/LintGoblin-0.5.0.zip"

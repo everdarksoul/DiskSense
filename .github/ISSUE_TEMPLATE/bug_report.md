@@ -10,7 +10,7 @@ about: Report a reproducible navigation, scan, or cleanup issue
 2.
 
 **Environment**
-- DiskSense version:
+- LintGoblin version:
 - macOS version and Apple Silicon/Intel:
 - Local/external/network drive:
 - Saved scan or live scan:

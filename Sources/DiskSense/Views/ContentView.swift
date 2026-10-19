@@ -4,7 +4,7 @@ import SwiftUI
 struct DiskSenseApp: App {
     @StateObject private var model = AppModel.live()
     var body: some Scene {
-        WindowGroup("DiskSense", id: "main") {
+        WindowGroup("LintGoblin", id: "main") {
             ContentView().environmentObject(model).frame(minWidth: 1120, minHeight: 760)
         }
         .windowStyle(.hiddenTitleBar)
@@ -22,7 +22,7 @@ struct DiskSenseApp: App {
                 Button("Export Report…") { model.exportReport() }.keyboardShortcut("e", modifiers: [.command, .shift]).disabled(model.snapshot == nil)
             }
         }
-        MenuBarExtra("DiskSense", systemImage: "chart.pie.fill") {
+        MenuBarExtra("LintGoblin", systemImage: "chart.pie.fill") {
             DiskPulsePanel().environmentObject(model)
         }.menuBarExtraStyle(.window)
     }
@@ -36,10 +36,10 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 12) {
                     Button { shell.showingPulse.toggle() } label: { DiskPulseMark(size: 42, animated: model.isScanning) }
-                        .buttonStyle(.plain).help("Meet Orbit · storage at a glance").accessibilityLabel("Open Orbit storage panel")
+                        .buttonStyle(.plain).help("Meet the Goblin · storage at a glance").accessibilityLabel("Open Goblin storage panel")
                         .popover(isPresented: $shell.showingPulse, arrowEdge: .leading) { DiskPulsePanel().environmentObject(model) }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("DiskSense").font(.title3.bold())
+                        Text("LintGoblin").font(.title3.bold())
                         Text("ROOM TO BREATHE").font(.system(size: 8, weight: .semibold, design: .rounded)).tracking(1.5).foregroundStyle(.secondary)
                     }
                 }.padding(18)
@@ -64,7 +64,7 @@ struct ContentView: View {
                 if model.overview.needsFullDiskAccess {
                     VStack(alignment: .leading, spacing: 6) {
                         Label("Some folders are protected", systemImage: "lock").font(.caption.bold())
-                        Text("Accessible data still scans. If the switch is already on, turn it off and on for this build, then reopen DiskSense.")
+                        Text("Accessible data still scans. If the switch is already on, turn it off and on for this build, then reopen LintGoblin.")
                             .font(.caption2).foregroundStyle(.secondary)
                         HStack {
                             Button("Settings") { FullDiskAccess.openPrivacyPane() }
@@ -123,10 +123,10 @@ struct ContentView: View {
         .confirmationDialog("Clear saved scan indexes?", isPresented: $model.showingClearScanConfirmation) {
             Button("Clear Saved Scans", role: .destructive) { model.clearSavedScans() }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("This removes DiskSense’s cached file indexes. Your files and cleanup history are kept.") }
+        } message: { Text("This removes LintGoblin’s cached file indexes. Your files and cleanup history are kept.") }
         .sheet(isPresented: $model.showingCleanup) { CleanupReviewView().environmentObject(model) }
         .sheet(isPresented: $model.showingCommandPalette) { CommandPaletteView().environmentObject(model) }
-        .alert("DiskSense", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
+        .alert("LintGoblin", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
     }
@@ -199,8 +199,8 @@ struct CleanupReviewView: View {
     @EnvironmentObject var model: AppModel
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("Review before moving to Trash", systemImage: "trash").font(.title2.bold())
-            Text("Only checked items will be moved. Sizes reflect the last measurement. Support files may contain settings and personal data. Quit the associated app first.")
+            Label(model.cleanupDisposition == .trash ? "Review before moving to Trash" : "Review permanent deletion", systemImage: model.cleanupDisposition == .trash ? "trash" : "exclamationmark.triangle").font(.title2.bold())
+            Text("Only checked items will be removed. Sizes reflect the last measurement. Support files may contain settings and personal data. Quit the associated app first.")
                 .font(.callout).foregroundStyle(.secondary)
             ScrollView {
              LazyVStack(alignment: .leading, spacing: 14) {
@@ -222,13 +222,22 @@ struct CleanupReviewView: View {
               }
              }.padding(12)
             }.frame(minHeight: 220)
-            Text("Items remain recoverable in Trash. Disk space is reclaimed when you empty Trash in Finder.").font(.caption).foregroundStyle(.secondary)
+            Picker("Removal method", selection: $model.cleanupDisposition) {
+                Text("Move to Trash").tag(CleanupDisposition.trash)
+                Text("Delete permanently").tag(CleanupDisposition.permanent)
+            }.pickerStyle(.segmented)
+            if model.cleanupDisposition == .permanent {
+                Text("Permanent deletion bypasses Trash and cannot be undone here. Type DELETE to enable it. Files may also exist in backups or APFS snapshots.").font(.caption).foregroundStyle(.red)
+                TextField("Type DELETE", text: $model.permanentConfirmation).textFieldStyle(.roundedBorder)
+            } else { Text("Items remain recoverable in Trash. Empty Trash in Finder to reclaim space.").font(.caption).foregroundStyle(.secondary) }
             HStack {
                 Text("\(model.cleanupSelection.count) selected · \(ByteFormat.string(model.selectedCleanupBytes))").font(.callout.bold())
                 Spacer()
                 Button("Cancel") { model.showingCleanup = false }.keyboardShortcut(.cancelAction)
-                Button("Move to Trash") { model.confirmCleanup() }.buttonStyle(.borderedProminent).disabled(model.cleanupSelection.isEmpty)
+                Button(model.cleanupDisposition == .trash ? "Move to Trash" : "Delete Permanently") { model.confirmCleanup() }.buttonStyle(.borderedProminent).tint(model.cleanupDisposition == .trash ? .accentColor : .red).disabled(model.cleanupSelection.isEmpty || (model.cleanupDisposition == .permanent && model.permanentConfirmation != "DELETE"))
             }
-        }.padding(24).frame(width: 720, height: 510)
+        }.padding(24).frame(width: 720, height: 620)
+        .onChange(of: model.cleanupSelection) { _ in model.permanentConfirmation = "" }
+        .onChange(of: model.cleanupDisposition) { _ in model.permanentConfirmation = "" }
     }
 }

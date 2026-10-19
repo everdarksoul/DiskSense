@@ -53,9 +53,15 @@ final class AppInventory: AppInventoryScanning {
             ("Library/Logs", .logs), ("Library/LaunchAgents", .launchAgents),
             ("Library/HTTPStorages", .caches), ("Library/WebKit", .caches)
         ]
-        // System metadata and installer receipts are deliberately excluded from
-        // uninstall suggestions. They are shared, managed, or require privileges.
-        return user.map { (home.appendingPathComponent($0.0), $0.1) }
+        let global: [(String, RelatedFile.Category)] = [
+            ("/Library/Application Support", .applicationSupport), ("/Library/Preferences", .preferences),
+            ("/Library/Caches", .caches), ("/Library/Logs", .logs),
+            ("/Library/LaunchAgents", .launchAgents), ("/Library/LaunchDaemons", .launchDaemons),
+            ("/Library/PrivilegedHelperTools", .other)
+        ]
+        // Managed services are reveal-only in the UI. Installer receipts and
+        // protected OS trees are not treated as uninstall leftovers.
+        return user.map { (home.appendingPathComponent($0.0), $0.1) } + global.map { (URL(fileURLWithPath: $0.0), $0.1) }
     }
 
     func buildInventory(onProgress: @escaping (String) -> Void,

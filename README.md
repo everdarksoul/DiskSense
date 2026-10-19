@@ -1,62 +1,87 @@
-# DiskSense
+<p align="center"><img src="docs/media/banner.png" alt="LintGoblin — your apps moved out. Their crumbs didn’t." width="100%"></p>
 
-**Find what takes space. Review what can go. Keep a way back.**
+# LintGoblin — Mac app cleaner & disk space analyzer
 
-A native, local-first macOS disk explorer and cleanup utility, written in SwiftUI and AppKit. MIT licensed. No accounts, telemetry, uploads, or runtime network access.
+**See what’s eating your disk. Inspect the files an app leaves behind. Choose what goes.**
 
-**Release status: 0.4 public beta.** The core is covered by fixture tests and local UI checks. Public production sign-off still requires Developer ID notarization, passing cross-Mac CI, and beta feedback. This repository does not claim category-leading speed or guaranteed reclaimed bytes.
+LintGoblin is a free, open-source macOS storage utility: a visual disk usage analyzer, an app uninstaller with connected-file review, and a deliberate cleanup tool in one native SwiftUI app. No accounts, telemetry, uploads, or runtime network access. MIT licensed.
 
-## Explore
+[![macOS checks](https://github.com/everdarksoul/LintGoblin/actions/workflows/verify.yml/badge.svg)](https://github.com/everdarksoul/LintGoblin/actions/workflows/verify.yml)
+[![MIT license](https://img.shields.io/badge/license-MIT-49bfa9)](LICENSE)
+[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-343d52)](#build-and-run)
+[![Public beta](https://img.shields.io/badge/status-source%20beta-e7af6c)](https://github.com/everdarksoul/LintGoblin/releases)
 
-- Size-proportional Space Map and a selectable list share folder navigation, back/forward history, a folder chooser, and a view switcher.
-- Open a different folder directly from the map. Indexed folders load from SQLite; unindexed folders can be measured live without forcing you into another screen.
-- Recently visited map folders stay in a bounded cache. Returning to a previously scanned root reopens its saved results; choose Rescan when you want fresh measurements.
-- Search paths by name, size, type and age. Compare top-level changes between retained scans of the same location.
-- Command-K switches tools. Command-O opens a folder. Command-F opens search. Command-R refreshes folder measurements.
+[Latest release](https://github.com/everdarksoul/LintGoblin/releases/tag/v0.5.0-beta.1) · [Build & run](#build-and-run) · [FAQ](docs/FAQ.md) · [Report a bug](https://github.com/everdarksoul/LintGoblin/issues/new/choose)
 
-## Make room deliberately
+**0.5 source beta, formerly DiskSense.** Build it locally to try it. A signed, notarized consumer download is still pending; CI packages are development artifacts. macOS 13+ is the app target; automated tests run on macOS 14 and 15.
 
-- **Make Room** proposes editable 1/5/10 GB plans from cache and generated-build candidates. It reports shortfalls honestly.
-- **Applications** measures complete app bundles and lists possible related files. Related data is not preselected during uninstall.
-- **Duplicates** verifies eligible local files of at least 1 MiB using streaming SHA-256. Symlinks, hard links, placeholders, app/managed-library contents, Git and Trash are excluded. Selected files and an unselected original are checked again before review and confirmation.
-- **Activity** records successes/failures and offers restore for recorded, identity-verified Trash destinations. Restore refuses to overwrite an existing destination. Legacy or mismatched receipts require Finder.
-- Every cleanup opens a separate review. DiskSense moves reviewed items to Trash; it never empties Trash. Close the associated apps before removing their caches.
+## Watch the disk, lose the crumbs
 
-The Apps and Cleanup inventory has its own timestamp and refresh control. Changing or refreshing the explored folder does not need to rebuild that inventory.
+![Recorded LintGoblin Space Map walkthrough using generated sample files](docs/media/space-map.gif)
 
-## Orbit
+A recording of the real app with generated sample files, played at 2× speed and cropped to remove the macOS title-bar controls. [Watch the MP4](docs/media/space-map.mp4). No personal files appear in the demo.
 
-Click the Orbit mark or menu-bar icon for a compact storage panel with current available capacity, scan progress and shortcuts. The animated mark respects Reduce Motion.
+## Two jobs, one Goblin
 
-## Honest measurements and bounded storage
+| What you want to do | How LintGoblin helps |
+| --- | --- |
+| Find large folders on your Mac | Size-proportional Space Map, folder list, shared navigation and folder chooser |
+| Explore another disk or folder | Choose an accessible folder or mounted volume; revisit cached results or rescan for fresh sizes |
+| See an app’s connected folders | App bundle, preferences, caches, support data and other possible matches, grouped with per-item Reveal |
+| Uninstall an app or remove selected leftovers | Select the bundle and/or connected files, then review every path; related data starts unselected |
+| Delete files permanently | Separate irreversible mode, typed `DELETE` confirmation and identity checks; Trash remains the default |
+| Find exact duplicate files | Streaming SHA-256 verification of eligible indexed local files, with an unselected copy rechecked before removal |
+| Make room toward a target | Editable 1 / 5 / 10 GB cleanup plans from cache and generated-build candidates |
+| Understand changes and recover mistakes | Saved-scan comparisons, cleanup receipts and verified restore for items moved to Trash |
 
-Physical BSD traversal counts allocated blocks, hidden files and package contents. It does not follow symlinks or request cloud downloads, and directory identities prevent repeated APFS alias traversal. Scans remain on the starting filesystem. Unreadable paths are reported as partial coverage.
+## The AppCleaner-style workflow
 
-Allocated totals are not a promise of reclaimed space: APFS clones, snapshots, purgeable storage and Trash all affect volume usage.
+1. Open **Applications** and find an app.
+2. Reveal its bundle or any possible connected folder in Finder. Inspection does not require uninstalling anything.
+3. Select only the files you understand. Support data may contain documents, databases or accounts; group containers may be shared.
+4. If that app is running, **Ask app to quit** requests a normal quit. Save its work first. Unrelated apps can stay open.
+5. **Review removal** shows the paths again. Use Trash for recovery, or explicitly choose permanent deletion and type `DELETE`.
 
-Saved data lives in `~/Library/Application Support/DiskSense` in an owner-only directory. Memory caches retain at most 24 folders and 50,000 rows. Each index normally retains up to 150,000 entries or 32 MiB of indexed path text, plus up to 10,000 immediate root items needed for navigation. A banner explicitly identifies limited coverage; folder measurement continues even when indexing stops. Search and duplicate checks then cover only indexed files—choose a smaller root for full coverage. Large folder queries show at most 10,000 indexed rows.
+Name and bundle-identifier matches are suggestions, not proof of ownership. Protected system files and managed services are not an automatic cleanup target. Administrator-protected items can be revealed in Finder for macOS authentication; **this beta does not contain a privileged deletion helper**. Full Disk Access grants read access to protected data, not root privileges. [Permissions & removal FAQ →](docs/FAQ.md)
 
-Retention keeps up to two scans per location and four globally, with a 256 MiB live-page target that evicts older indexes or reduces the current index. SQLite WAL/slack and unusually large immediate root entries can temporarily exceed the target; maintenance compacts free pages. Cleanup history is preserved. The toolbar menu can reveal local data or clear saved indexes. The 0.4 upgrade rebuilds incompatible pre-0.4 indexes to remove incorrect historical alias totals; user files, inventory and cleanup history are kept.
+## Small details that matter
 
-Full Disk Access is optional for readable folders and needed for protected data. Local ad-hoc replacements may invalidate an existing approval even while its toggle remains on. Stable Developer ID signing is a production release requirement.
+- Saved roots reopen without an automatic full rescan. Recent map folders have bounded caches.
+- Map and list share back/forward history. Apps & Cleanup refresh independently from folder scans.
+- Find files by name, size, type or age; export a local JSON report.
+- The animated Goblin opens a compact storage panel; Reduce Motion is respected.
+- `⌘O` chooses a folder, `⌘2` opens Space Map, `⌘F` finds files, `⌘K` switches tools, `⌘R` refreshes.
 
-## Build and test
+## Cleanup with a clear consequence
 
-The app targets macOS 13+. Use Swift 6 on macOS 14+ for tests; the Swift Testing runtime supplied by current tools requires a newer OS than the app's deployment target.
+Every removal has a separate review. The engine rejects protected roots, the running app and its reviewed connections, ancestor symlink escapes, and changed file identities. Final symlinks are removed as links. Permanent deletion bypasses Trash and has no in-app restore; it is not secure erasure and does not remove backups or APFS snapshots.
+
+Trash operations keep receipts and verify the recorded destination before restore. Restore refuses to overwrite another file. LintGoblin never empties Trash automatically. Partial failures are reported; successful removal is not a promise of immediately reclaimed physical bytes.
+
+Scans measure allocated storage without following symlinks or requesting cloud downloads. Unreadable paths and index limits are reported. APFS clones, snapshots, purgeable space and Trash can make folder totals differ from volume usage. [Measurement and storage details →](docs/STORAGE.md)
+
+## Build and run
+
+Requires macOS and Swift 6. Use macOS 14+ for the Swift Testing suite.
 
 ```sh
+git clone https://github.com/everdarksoul/LintGoblin.git
+cd LintGoblin
 ./scripts/test.sh
 ./scripts/build-app.sh
+open .build/Distribution/LintGoblin.app
 ```
 
-The test script supports full Xcode and Command Line Tools-only installations. The release script builds an optimized app, generates its icon, verifies the signature, and writes `.build/Distribution/DiskSense.app` and `DiskSense-0.4.0.zip`.
+Builds produce `.build/Distribution/LintGoblin.app` and `LintGoblin-0.5.0.zip`. Local builds use ad-hoc signing unless `DISKSENSE_SIGNING_IDENTITY` names an existing Developer ID certificate. The internal executable, bundle identifier and `~/Library/Application Support/DiskSense` data directory retain their original names for compatibility.
 
-By default builds are signed ad hoc for local development. Set `DISKSENSE_SIGNING_IDENTITY` to an existing Developer ID certificate for hardened-runtime signing. See [release requirements](docs/RELEASE.md) before distributing binaries.
+CI tests and builds on macOS 14 and 15. Regression tests use disposable fixtures and injected operations, covering protected paths, stale identities, running-app checks, symlinks, exact duplicates, index retention and scan lifecycle. Real home folders are never cleaned by the test suite. [Test details](Tests/README.md) · [Production release requirements](docs/RELEASE.md)
 
-CI builds and tests on macOS 14 and 15. Tests use disposable fixtures and injected Trash operations; they do not clean a real home directory or empty Trash. A 5,000-file fixture exercises complete indexing and a nested folder query. Local timings are evidence for that fixture only, not a competitor benchmark.
+## What’s still missing
 
-## Scope
+A signed and notarized consumer installer, a vetted privileged helper, incremental indexing, automatic background cleanup and APFS snapshot management. Related-file matching is heuristic. Index coverage is bounded; search and duplicates cover indexed files only. Choose a smaller root for full coverage. macOS 13 and both CPU architectures still need broader hardware testing before we claim production support.
 
-There is no incremental/FSEvents indexing, automatic background cleanup, APFS snapshot management, or privileged system cleaner. Folder refreshes are full measurements of the selected root. Categories and related-app matching are heuristics, not guarantees that data is disposable.
+## Help the Goblin grow
 
-See [contributing](CONTRIBUTING.md), [security](SECURITY.md), [source provenance](docs/PROVENANCE.md) and [MIT license](LICENSE).
+Reproduce a bug with a disposable folder, include the app/OS version, and redact private paths. Useful feedback: folder navigation, permission failures, misleading app connections and cleanup errors. Please do not upload scan databases or personal reports.
+
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Source & artwork provenance](docs/PROVENANCE.md) · [MIT license](LICENSE)

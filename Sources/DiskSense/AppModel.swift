@@ -30,6 +30,9 @@ final class AppModel: ObservableObject {
     @Published var completedStages: Set<String> = []
     @Published var scanStarted: Date?
     @Published var showingCleanup = false
+    @Published var cleanupDisposition: CleanupDisposition = .trash
+    @Published var permanentConfirmation = ""
+    var cleanupAssociatedAppURL: URL?
     @Published var showingCommandPalette = false
     @Published var cleanupCandidates: [CleanupCandidate] = []
     @Published var cleanupSelection: Set<String> = []
@@ -431,11 +434,12 @@ final class AppModel: ObservableObject {
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func openTrash() { NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")) }
 
-    func reviewCleanup(_ candidates: [CleanupCandidate], initiallySelected: Set<String>? = nil) {
+    func reviewCleanup(_ candidates: [CleanupCandidate], initiallySelected: Set<String>? = nil, associatedAppURL: URL? = nil) {
         guard !isCleaning else { return }
         cleanupDuplicateGroups = nil; cleanupDuplicateEntries = [:]
+        cleanupDisposition = .trash; permanentConfirmation = ""; cleanupAssociatedAppURL = associatedAppURL
         do {
-            cleanupCandidates = try CleanupService(allowedRoots: [scanRoot]).validate(candidates)
+            cleanupCandidates = try CleanupService(allowedRoots: [scanRoot], associatedApplicationURL: associatedAppURL).validate(candidates)
             guard !cleanupCandidates.isEmpty else { return }
             cleanupSelection = initiallySelected ?? Set(cleanupCandidates.map(\.id))
             showingCleanup = true
@@ -447,18 +451,21 @@ final class AppModel: ObservableObject {
             CleanupCandidate(url: URL(fileURLWithPath: $0.path), bytes: $0.bytes, reason: "Possible related \($0.category.rawValue.lowercased()) — review before removing")
         }
         // Support files can contain personal data. Uninstall selects only the app by default.
-        reviewCleanup(candidates, initiallySelected: [])
+        reviewCleanup(candidates, initiallySelected: [], associatedAppURL: app.appURL)
         if showingCleanup { cleanupSelection = Set(cleanupCandidates.filter { $0.reason == "Application" }.map(\.id)) }
     }
 
     func confirmCleanup() {
+        guard showingCleanup, !isCleaning else { return }
         let selected = cleanupCandidates.filter { cleanupSelection.contains($0.id) }
-        guard !selected.isEmpty else { return }
+        guard !selected.isEmpty, cleanupDisposition == .trash || permanentConfirmation == "DELETE" else { return }
         if isScanning { cancelScan() }
         browserCancellation.cancel(); browserIsScanning = false
-        showingCleanup = false; isCleaning = true; cleaningLabel = "Moving to Trash…"
+        showingCleanup = false; isCleaning = true; cleaningLabel = cleanupDisposition == .trash ? "Moving to Trash…" : "Deleting selected items…"
         let root = scanRoot
         let persistence = store
+        let disposition = cleanupDisposition
+        let associatedApp = cleanupAssociatedAppURL
         let duplicateContext = cleanupDuplicateGroups
         let duplicateEntries = selected.compactMap { cleanupDuplicateEntries[$0.id] }
         DispatchQueue.global(qos: .userInitiated).async {
@@ -469,9 +476,10 @@ final class AppModel: ObservableObject {
                     guard duplicateEntries.count == selected.count else { throw StoreError(message: "Duplicate review changed. Check those copies again.") }
                     candidates = try DuplicateFinder.validateForCleanup(entries: duplicateEntries, groups: duplicateContext)
                 }
-                result = CleanupService(allowedRoots: [root]).moveToTrash(candidates)
+                let service = CleanupService(allowedRoots: [root], associatedApplicationURL: associatedApp)
+                result = disposition == .trash ? service.moveToTrash(candidates) : service.deletePermanently(candidates)
             } catch { result = CleanupResult(moved: [], failures: [error.localizedDescription]) }
-            let event = CleanupEvent(id: UUID().uuidString, date: Date(), receipts: result.receipts, failures: result.failures, restored: [])
+            let event = CleanupEvent(id: UUID().uuidString, date: Date(), receipts: result.receipts, failures: result.failures, restored: [], disposition: disposition)
             var historyError: String?
             do { try persistence?.saveHistory(event) } catch { historyError = error.localizedDescription }
             let updatedHistory = (try? persistence?.history()) ?? []
@@ -481,7 +489,7 @@ final class AppModel: ObservableObject {
                 self.cleanupHistory = updatedHistory
                 if let saveError { self.persistenceWarning = "Cleanup history could not be saved: " + saveError }
                 if !result.moved.isEmpty {
-                    self.notice = "Moved \(result.moved.count) item(s) to Trash. Empty Trash in Finder when you are ready to reclaim the space."
+                    self.notice = disposition == .trash ? "Moved \(result.moved.count) item(s) to Trash. Empty Trash in Finder when you are ready to reclaim the space." : "Permanently deleted \(result.moved.count) item(s). These items cannot be restored by LintGoblin."
                     self.runFullScan()
                 }
                 if !result.failures.isEmpty { self.errorMessage = result.failures.joined(separator: "\n") }

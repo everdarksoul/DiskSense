@@ -123,4 +123,18 @@ struct ScanStoreTests {
         #expect(FileManager.default.fileExists(atPath: legacy.path))
     }
 
+    @Test func permanentHistoryRoundTripsAndLegacyHistoryKeepsTrashSemantics() throws {
+        let home = try fixture(); defer { try? FileManager.default.removeItem(at: home) }
+        let store = try ScanStore(directory: home.appendingPathComponent("Store"))
+        let receipt = TrashReceipt(originalURL: home.appendingPathComponent("gone"), trashURL: nil, bytes: 12)
+        let permanent = CleanupEvent(id: "permanent", date: Date(), receipts: [receipt], failures: [], restored: [], disposition: .permanent)
+        try store.saveHistory(permanent)
+        #expect(try store.history().first?.disposition == .permanent)
+        #expect(try store.history().first?.receipts.first?.trashURL == nil)
+        let legacy = CleanupEvent(id: "legacy", date: Date(), receipts: [], failures: [], restored: [])
+        let encoded = try JSONEncoder().encode(legacy)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("disposition"))
+        #expect(try JSONDecoder().decode(CleanupEvent.self, from: encoded).disposition == nil)
+    }
+
 }
